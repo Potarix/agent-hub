@@ -1,0 +1,1109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agent Hub</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-0: #08080d;
+      --bg-1: #0e0e16;
+      --bg-2: #16161f;
+      --bg-3: #1e1e2a;
+      --bg-4: #282838;
+      --border: #2a2a3a;
+      --border-light: #3a3a4f;
+      --text-0: #f0f0f5;
+      --text-1: #c0c0d0;
+      --text-2: #8888a0;
+      --accent: #7c6aff;
+      --accent-dim: #5a4abf;
+      --green: #34d399;
+      --red: #f87171;
+      --orange: #fbbf24;
+      --blue: #60a5fa;
+      --radius: 10px;
+      --radius-sm: 6px;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, sans-serif;
+      background: var(--bg-0);
+      color: var(--text-0);
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    button, input, textarea, select { -webkit-app-region: no-drag; }
+
+    /* ── Layout ── */
+    #root { height: 100vh; display: flex; flex-direction: column; }
+
+    .titlebar {
+      height: 38px;
+      display: flex;
+      align-items: center;
+      padding: 0 80px 0 80px;
+      background: var(--bg-1);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      gap: 8px;
+      -webkit-app-region: drag;
+    }
+
+    .titlebar-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-1);
+      letter-spacing: 0.5px;
+    }
+
+    .titlebar-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    .app-body {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      width: 260px;
+      background: var(--bg-1);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+
+    .sidebar-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .sidebar-header h2 {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: var(--text-2);
+      font-weight: 600;
+    }
+
+    .btn-icon {
+      width: 28px; height: 28px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-2);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      transition: all 0.15s;
+    }
+    .btn-icon:hover { background: var(--bg-3); color: var(--text-0); }
+
+    .agent-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+
+    .agent-card {
+      padding: 12px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: all 0.15s;
+      margin-bottom: 4px;
+      border: 1px solid transparent;
+    }
+    .agent-card:hover { background: var(--bg-2); }
+    .agent-card.active { background: var(--bg-3); border-color: var(--accent-dim); }
+
+    .agent-card-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .agent-avatar {
+      width: 36px; height: 36px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .agent-info { flex: 1; min-width: 0; }
+    .agent-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .agent-provider { font-size: 11px; color: var(--text-2); margin-top: 2px; }
+
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .status-dot.online { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .status-dot.offline { background: var(--red); }
+    .status-dot.checking { background: var(--orange); animation: pulse 1s infinite; }
+
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+    .sidebar-footer {
+      padding: 12px;
+      border-top: 1px solid var(--border);
+    }
+
+    .btn-settings {
+      width: 100%;
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-1);
+      cursor: pointer;
+      font-size: 12px;
+      font-family: inherit;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.15s;
+    }
+    .btn-settings:hover { background: var(--bg-3); }
+
+    /* ── Main content ── */
+    .main-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-0);
+      min-width: 0;
+    }
+
+    /* ── Dashboard (no agent selected) ── */
+    .dashboard {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px;
+      gap: 24px;
+    }
+
+    .dash-logo {
+      width: 64px; height: 64px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, var(--accent), #a78bfa);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      font-weight: 700;
+    }
+
+    .dash-title { font-size: 24px; font-weight: 700; }
+    .dash-sub { color: var(--text-2); font-size: 14px; text-align: center; max-width: 400px; line-height: 1.6; }
+
+    .dash-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      max-width: 600px;
+      width: 100%;
+      margin-top: 12px;
+    }
+
+    .dash-stat {
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      text-align: center;
+    }
+    .dash-stat-num { font-size: 28px; font-weight: 700; }
+    .dash-stat-label { font-size: 11px; color: var(--text-2); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.8px; }
+
+    /* ── Chat ── */
+    .chat-header {
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--bg-1);
+    }
+    .chat-header .agent-name { font-size: 15px; }
+
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .msg {
+      max-width: 75%;
+      padding: 12px 16px;
+      border-radius: 14px;
+      font-size: 14px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .msg.user {
+      align-self: flex-end;
+      background: var(--accent);
+      color: white;
+      border-bottom-right-radius: 4px;
+    }
+    .msg.assistant {
+      align-self: flex-start;
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      border-bottom-left-radius: 4px;
+    }
+    .msg.assistant code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      background: var(--bg-4);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+    .msg.error {
+      align-self: center;
+      background: rgba(248,113,113,0.1);
+      border: 1px solid var(--red);
+      color: var(--red);
+      font-size: 12px;
+    }
+
+    .typing-indicator {
+      align-self: flex-start;
+      display: flex;
+      gap: 4px;
+      padding: 12px 16px;
+    }
+    .typing-indicator span {
+      width: 6px; height: 6px;
+      background: var(--text-2);
+      border-radius: 50%;
+      animation: bounce 1.4s infinite;
+    }
+    .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes bounce { 0%, 80%, 100% { transform: scale(0.6); } 40% { transform: scale(1); } }
+
+    .chat-input-bar {
+      padding: 16px 20px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 10px;
+      background: var(--bg-1);
+    }
+
+    .chat-input {
+      flex: 1;
+      padding: 10px 14px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--bg-2);
+      color: var(--text-0);
+      font-family: inherit;
+      font-size: 14px;
+      outline: none;
+      resize: none;
+      max-height: 120px;
+    }
+    .chat-input:focus { border-color: var(--accent); }
+    .chat-input::placeholder { color: var(--text-2); }
+
+    .btn-send {
+      padding: 10px 20px;
+      border-radius: var(--radius);
+      border: none;
+      background: var(--accent);
+      color: white;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-send:hover { background: var(--accent-dim); }
+    .btn-send:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── Settings modal ── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+
+    .modal {
+      background: var(--bg-1);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      width: 560px;
+      max-height: 80vh;
+      overflow-y: auto;
+      padding: 24px;
+    }
+
+    .modal h2 { font-size: 18px; font-weight: 700; margin-bottom: 20px; }
+    .modal h3 { font-size: 13px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.8px; margin: 16px 0 8px; }
+
+    .form-row { margin-bottom: 12px; }
+    .form-row label { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 4px; }
+    .form-row input, .form-row select {
+      width: 100%;
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      background: var(--bg-2);
+      color: var(--text-0);
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+    }
+    .form-row input:focus, .form-row select:focus { border-color: var(--accent); }
+
+    .form-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      margin-top: 20px;
+    }
+
+    .btn { padding: 8px 16px; border-radius: var(--radius-sm); border: none; font-family: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-primary:hover { background: var(--accent-dim); }
+    .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text-1); }
+    .btn-ghost:hover { background: var(--bg-3); }
+    .btn-danger { background: transparent; border: 1px solid var(--red); color: var(--red); }
+    .btn-danger:hover { background: rgba(248,113,113,0.1); }
+    .btn-test { background: transparent; border: 1px solid var(--green); color: var(--green); }
+    .btn-test:hover { background: rgba(52,211,153,0.1); }
+    .btn-test:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .test-result {
+      margin-top: 8px;
+      padding: 10px 14px;
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      line-height: 1.5;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .test-result.success { background: rgba(52,211,153,0.1); border: 1px solid var(--green); color: var(--green); }
+    .test-result.failure { background: rgba(248,113,113,0.1); border: 1px solid var(--red); color: var(--red); }
+    .test-result.testing { background: rgba(251,191,36,0.1); border: 1px solid var(--orange); color: var(--orange); }
+
+    .presets-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .preset-card {
+      padding: 12px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--bg-2);
+      cursor: pointer;
+      transition: all 0.15s;
+      text-align: center;
+    }
+    .preset-card:hover { border-color: var(--accent); background: var(--bg-3); }
+    .preset-card-icon { font-size: 24px; margin-bottom: 6px; }
+    .preset-card-name { font-size: 13px; font-weight: 600; }
+    .preset-card-desc { font-size: 11px; color: var(--text-2); margin-top: 2px; }
+
+    .empty-list {
+      padding: 40px;
+      text-align: center;
+      color: var(--text-2);
+      font-size: 13px;
+    }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--bg-4); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
+
+    /* ── Provider colors ── */
+    .provider-openclaws { background: linear-gradient(135deg, #f97316, #ea580c); color: white; }
+    .provider-anthropic { background: linear-gradient(135deg, #d4a574, #c4956a); color: #1a1a2e; }
+    .provider-openai { background: linear-gradient(135deg, #10a37f, #0d8c6d); color: white; }
+    .provider-claude-code { background: linear-gradient(135deg, #f59e0b, #d97706); color: #1a1a2e; }
+    .provider-hermes { background: linear-gradient(135deg, #a855f7, #7c3aed); color: white; }
+    .provider-generic { background: linear-gradient(135deg, var(--blue), #3b82f6); color: white; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    // ── Default agents config ──
+    const DEFAULT_AGENTS = [
+      {
+        id: 'openclaw-1',
+        name: 'OpenClaw VPS',
+        provider: 'openclaw',
+        sshHost: '157.180.23.7',
+        sshUser: 'root',
+        sshPort: 22,
+        sshKey: '',
+        apiKey: 'dc5b8b6af0b393dbd323cfb08201b95463f92c35865328df',
+        openclawAgent: '',
+        model: '',
+        emoji: 'OC',
+        providerClass: 'provider-openclaws',
+        systemPrompt: '',
+        maxTokens: 16384,
+      },
+      {
+        id: 'claude-1',
+        name: 'Claude (Cloud)',
+        provider: 'anthropic',
+        baseUrl: 'https://api.anthropic.com',
+        apiKey: '',
+        model: 'claude-sonnet-4-20250514',
+        emoji: 'C',
+        providerClass: 'provider-anthropic',
+        systemPrompt: 'You are Claude, a helpful AI assistant.',
+        maxTokens: 16384,
+      },
+    ];
+
+    const CONFIG_VERSION = 5; // bump to reset saved config
+    function loadAgents() {
+      try {
+        const ver = localStorage.getItem('agent-hub-version');
+        if (ver !== String(CONFIG_VERSION)) {
+          localStorage.removeItem('agent-hub-agents');
+          localStorage.setItem('agent-hub-version', String(CONFIG_VERSION));
+          return DEFAULT_AGENTS;
+        }
+        const saved = localStorage.getItem('agent-hub-agents');
+        return saved ? JSON.parse(saved) : DEFAULT_AGENTS;
+      } catch { return DEFAULT_AGENTS; }
+    }
+
+    function saveAgents(agents) {
+      localStorage.setItem('agent-hub-agents', JSON.stringify(agents));
+    }
+
+    // ── App ──
+    function App() {
+      const [agents, setAgents] = useState(loadAgents);
+      const [activeId, setActiveId] = useState(null);
+      const [chats, setChats] = useState({});
+      const [statuses, setStatuses] = useState({});
+      const [showSettings, setShowSettings] = useState(false);
+      const [editAgent, setEditAgent] = useState(null);
+
+      const activeAgent = agents.find(a => a.id === activeId);
+
+      useEffect(() => { saveAgents(agents); }, [agents]);
+
+      // Ping all agents on load
+      useEffect(() => {
+        agents.forEach(agent => {
+          setStatuses(s => ({ ...s, [agent.id]: 'checking' }));
+          window.agentHub.ping(agent).then(res => {
+            setStatuses(s => ({ ...s, [agent.id]: res.online ? 'online' : 'offline' }));
+          });
+        });
+      }, [agents.length]);
+
+      const updateAgent = (updated) => {
+        setAgents(prev => {
+          const exists = prev.some(a => a.id === updated.id);
+          if (exists) return prev.map(a => a.id === updated.id ? updated : a);
+          return [...prev, updated];
+        });
+        setEditAgent(null);
+      };
+
+      const addAgent = () => {
+        setEditAgent(null);
+        setShowSettings(true);
+        // The modal will show presets view when editAgent is null and user clicks "+ Add Agent"
+      };
+
+      const removeAgent = (id) => {
+        setAgents(prev => prev.filter(a => a.id !== id));
+        if (activeId === id) setActiveId(null);
+        setEditAgent(null);
+      };
+
+      const onlineCount = Object.values(statuses).filter(s => s === 'online').length;
+
+      return (
+        <>
+          <div className="titlebar">
+            <div className="titlebar-dot" />
+            <span className="titlebar-title">AGENT HUB</span>
+          </div>
+          <div className="app-body">
+            <Sidebar
+              agents={agents}
+              activeId={activeId}
+              statuses={statuses}
+              onSelect={setActiveId}
+              onAdd={addAgent}
+              onOpenSettings={() => setShowSettings(true)}
+            />
+            <div className="main-area">
+              {activeAgent ? (
+                <ChatView
+                  agent={activeAgent}
+                  status={statuses[activeAgent.id]}
+                  messages={chats[activeAgent.id] || []}
+                  setMessages={(msgs) => setChats(prev => ({ ...prev, [activeAgent.id]: typeof msgs === 'function' ? msgs(prev[activeAgent.id] || []) : msgs }))}
+                />
+              ) : (
+                <Dashboard agents={agents} statuses={statuses} onlineCount={onlineCount} />
+              )}
+            </div>
+          </div>
+
+          {showSettings && (
+            <SettingsModal
+              agents={agents}
+              editAgent={editAgent}
+              setEditAgent={setEditAgent}
+              onUpdate={updateAgent}
+              onRemove={removeAgent}
+              onAdd={addAgent}
+              onClose={() => { setShowSettings(false); setEditAgent(null); }}
+            />
+          )}
+        </>
+      );
+    }
+
+    // ── Sidebar ──
+    function Sidebar({ agents, activeId, statuses, onSelect, onAdd, onOpenSettings }) {
+      return (
+        <div className="sidebar">
+          <div className="sidebar-header">
+            <h2>Agents</h2>
+            <button className="btn-icon" onClick={onAdd} title="Add agent">+</button>
+          </div>
+          <div className="agent-list">
+            {agents.length === 0 && <div className="empty-list">No agents yet. Click + to add one.</div>}
+            {agents.map(agent => (
+              <div
+                key={agent.id}
+                className={`agent-card ${activeId === agent.id ? 'active' : ''}`}
+                onClick={() => onSelect(agent.id)}
+              >
+                <div className="agent-card-header">
+                  <div className={`agent-avatar ${agent.providerClass}`}>
+                    {agent.emoji}
+                  </div>
+                  <div className="agent-info">
+                    <div className="agent-name">{agent.name}</div>
+                    <div className="agent-provider">
+                      {agent.provider === 'claude-code' ? 'Claude Code' : agent.provider === 'anthropic' ? 'Anthropic' : agent.provider === 'openclaw' ? 'OpenClaw SSH' : agent.provider === 'hermes' ? 'Hermes SSH' : agent.provider === 'openai-compat' ? 'OpenAI Compat' : agent.provider}
+                      {agent.model ? ` / ${agent.model}` : ''}
+                    </div>
+                  </div>
+                  <div className={`status-dot ${statuses[agent.id] || 'offline'}`} />
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="sidebar-footer">
+            <button className="btn-settings" onClick={onOpenSettings}>
+              <span style={{ fontSize: '14px' }}>&#9881;</span> Settings
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Dashboard ──
+    function Dashboard({ agents, statuses, onlineCount }) {
+      return (
+        <div className="dashboard">
+          <div className="dash-logo">AH</div>
+          <div className="dash-title">Agent Hub</div>
+          <div className="dash-sub">
+            Your unified command center for all AI agents. Select an agent from the sidebar to start chatting, or add a new one.
+          </div>
+          <div className="dash-grid">
+            <div className="dash-stat">
+              <div className="dash-stat-num">{agents.length}</div>
+              <div className="dash-stat-label">Total Agents</div>
+            </div>
+            <div className="dash-stat">
+              <div className="dash-stat-num" style={{ color: 'var(--green)' }}>{onlineCount}</div>
+              <div className="dash-stat-label">Online</div>
+            </div>
+            <div className="dash-stat">
+              <div className="dash-stat-num" style={{ color: 'var(--red)' }}>{agents.length - onlineCount}</div>
+              <div className="dash-stat-label">Offline</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Chat View ──
+    function ChatView({ agent, status, messages, setMessages }) {
+      const [input, setInput] = useState('');
+      const [loading, setLoading] = useState(false);
+      const [streamText, setStreamText] = useState('');
+      const bottomRef = useRef(null);
+      const inputRef = useRef(null);
+
+      useEffect(() => {
+        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, [messages, streamText]);
+
+      useEffect(() => {
+        inputRef.current?.focus();
+      }, [agent.id]);
+
+      const loadingRef = useRef(false);
+
+      const sendMessage = async () => {
+        const text = input.trim();
+        if (!text || loadingRef.current) return;
+
+        loadingRef.current = true;
+        setLoading(true);
+
+        const userMsg = { role: 'user', content: text };
+        setMessages(prev => [...prev, userMsg]);
+        setInput('');
+
+        const apiMessages = [];
+        if (agent.systemPrompt) apiMessages.push({ role: 'system', content: agent.systemPrompt });
+        const allMsgs = [...(messages || []), userMsg];
+        apiMessages.push(...allMsgs.slice(-20));
+
+        try {
+          const res = await window.agentHub.chat(agent, apiMessages);
+          if (res.error) {
+            setMessages(prev => [...prev, { role: 'error', content: res.error }]);
+          } else if (res.content) {
+            setMessages(prev => [...prev, { role: 'assistant', content: res.content }]);
+          }
+        } catch (err) {
+          setMessages(prev => [...prev, { role: 'error', content: err.message || 'Something went wrong' }]);
+        } finally {
+          loadingRef.current = false;
+          setLoading(false);
+        }
+      };
+
+      const onKeyDown = (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+        }
+      };
+
+      return (
+        <>
+          <div className="chat-header">
+            <div className={`agent-avatar ${agent.providerClass}`} style={{ width: 32, height: 32, fontSize: 13 }}>
+              {agent.emoji}
+            </div>
+            <div>
+              <div className="agent-name">{agent.name}</div>
+              <div className="agent-provider" style={{ fontSize: 11 }}>
+                {status === 'online' ? 'Connected' : status === 'checking' ? 'Checking...' : 'Disconnected'}
+              </div>
+            </div>
+          </div>
+
+          <div className="chat-messages">
+            {messages.length === 0 && !loading && (
+              <div style={{ textAlign: 'center', color: 'var(--text-2)', marginTop: 'auto', marginBottom: 'auto', fontSize: 14 }}>
+                Start a conversation with {agent.name}
+              </div>
+            )}
+            {messages.map((msg, i) => (
+              <div key={i} className={`msg ${msg.role}`}>{msg.content}</div>
+            ))}
+            {loading && streamText && (
+              <div className="msg assistant">{streamText}</div>
+            )}
+            {loading && !streamText && (
+              <div className="typing-indicator">
+                <span /><span /><span />
+              </div>
+            )}
+            <div ref={bottomRef} />
+          </div>
+
+          <div className="chat-input-bar">
+            <textarea
+              ref={inputRef}
+              className="chat-input"
+              rows={1}
+              placeholder={`Message ${agent.name}...`}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={onKeyDown}
+            />
+            <button className="btn-send" onClick={sendMessage} disabled={loading || !input.trim()}>
+              Send
+            </button>
+          </div>
+        </>
+      );
+    }
+
+    // ── Agent Presets ──
+    const PRESETS = [
+      { name: 'OpenClaw (VPS)', emoji: 'OC', provider: 'openclaw', sshHost: '157.180.23.7', sshUser: 'root', apiKey: 'dc5b8b6af0b393dbd323cfb08201b95463f92c35865328df', model: '', providerClass: 'provider-openclaws', desc: 'Your OpenClaw on VPS via SSH' },
+      { name: 'Claude (Anthropic)', emoji: 'C', provider: 'anthropic', baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-4-20250514', providerClass: 'provider-anthropic', desc: 'Claude via Anthropic API' },
+      { name: 'Claude Code (Local)', emoji: 'CC', provider: 'claude-code', model: '', workDir: '', providerClass: 'provider-claude-code', desc: 'Local Claude Code CLI instance' },
+      { name: 'Hermes Agent (VPS)', emoji: 'H', provider: 'hermes', sshHost: '', sshUser: 'root', model: '', providerClass: 'provider-hermes', desc: 'NousResearch Hermes via SSH' },
+      { name: 'Ollama (Local)', emoji: 'OL', provider: 'openai-compat', baseUrl: 'http://localhost:11434', model: 'llama3', providerClass: 'provider-generic', desc: 'Local Ollama instance' },
+      { name: 'Custom Agent', emoji: '?', provider: 'openai-compat', baseUrl: 'http://localhost:8080', model: '', providerClass: 'provider-generic', desc: 'Any OpenAI-compat endpoint' },
+    ];
+
+    // ── Settings Modal ──
+    function SettingsModal({ agents, editAgent, setEditAgent, onUpdate, onRemove, onAdd, onClose }) {
+      const [form, setForm] = useState(editAgent || {});
+      const [testStatus, setTestStatus] = useState(null); // null | 'testing' | {ok, msg}
+      const [showPresets, setShowPresets] = useState(false);
+
+      useEffect(() => {
+        if (editAgent) { setForm({ ...editAgent }); setTestStatus(null); }
+      }, [editAgent]);
+
+      const providerClasses = {
+        'claude-code': 'provider-claude-code',
+        'openclaw': 'provider-openclaws',
+        'hermes': 'provider-hermes',
+        'openai-compat': 'provider-generic',
+        'anthropic': 'provider-anthropic',
+        'openai': 'provider-openai',
+      };
+
+      const handleSave = () => {
+        const updated = { ...form, providerClass: providerClasses[form.provider] || 'provider-generic' };
+        onUpdate(updated);
+      };
+
+      const handleTest = async () => {
+        setTestStatus('testing');
+        const testAgent = { ...form, providerClass: providerClasses[form.provider] || 'provider-generic' };
+        try {
+          const res = await window.agentHub.ping(testAgent);
+          if (res.online) {
+            setTestStatus({ ok: true, msg: 'Connected successfully!' });
+          } else {
+            setTestStatus({ ok: false, msg: res.error || 'Could not reach agent. Check the URL and make sure it\'s running.' });
+          }
+        } catch (err) {
+          setTestStatus({ ok: false, msg: err.message || 'Connection failed' });
+        }
+      };
+
+      const handlePreset = (preset) => {
+        const newAgent = {
+          id: `agent-${Date.now()}`,
+          name: preset.name,
+          provider: preset.provider,
+          baseUrl: preset.baseUrl,
+          apiKey: '',
+          model: preset.model,
+          emoji: preset.emoji,
+          providerClass: preset.providerClass,
+          systemPrompt: '',
+          maxTokens: 16384,
+        };
+        setForm(newAgent);
+        setShowPresets(false);
+        // We set editAgent via the parent after saving, but we need to show the form now
+        // So we'll treat this as editing a new unsaved agent
+        setEditAgent(newAgent);
+      };
+
+      return (
+        <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+          <div className="modal">
+            <h2>{editAgent ? (agents.find(a => a.id === editAgent.id) ? 'Edit Agent' : 'Add Agent') : 'Agent Settings'}</h2>
+
+            {!editAgent && !showPresets ? (
+              <>
+                {agents.map(agent => (
+                  <div
+                    key={agent.id}
+                    className="agent-card"
+                    style={{ cursor: 'pointer', marginBottom: 6, border: '1px solid var(--border)' }}
+                    onClick={() => setEditAgent(agent)}
+                  >
+                    <div className="agent-card-header">
+                      <div className={`agent-avatar ${agent.providerClass}`} style={{ width: 32, height: 32, fontSize: 12 }}>
+                        {agent.emoji}
+                      </div>
+                      <div className="agent-info">
+                        <div className="agent-name">{agent.name}</div>
+                        <div className="agent-provider">{agent.provider}</div>
+                      </div>
+                      <span style={{ color: 'var(--text-2)', fontSize: 12 }}>Edit &rarr;</span>
+                    </div>
+                  </div>
+                ))}
+                <div className="form-actions" style={{ justifyContent: 'space-between' }}>
+                  <button className="btn btn-primary" onClick={() => setShowPresets(true)}>+ Add Agent</button>
+                  <button className="btn btn-ghost" onClick={onClose}>Close</button>
+                </div>
+              </>
+            ) : showPresets && !editAgent ? (
+              <>
+                <p style={{ fontSize: 13, color: 'var(--text-2)', marginBottom: 12 }}>Choose a starting template:</p>
+                <div className="presets-grid">
+                  {PRESETS.map((p, i) => (
+                    <div key={i} className="preset-card" onClick={() => handlePreset(p)}>
+                      <div className="preset-card-icon">{p.emoji}</div>
+                      <div className="preset-card-name">{p.name}</div>
+                      <div className="preset-card-desc">{p.desc}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="form-actions">
+                  <button className="btn btn-ghost" onClick={() => setShowPresets(false)}>Back</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3>Connection</h3>
+                <div className="form-row">
+                  <label>Name</label>
+                  <input value={form.name || ''} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+                </div>
+                <div className="form-row">
+                  <label>Display Emoji / Initials</label>
+                  <input value={form.emoji || ''} onChange={e => setForm(f => ({ ...f, emoji: e.target.value }))} maxLength={3} />
+                </div>
+                <div className="form-row">
+                  <label>Provider</label>
+                  <select value={form.provider || ''} onChange={e => setForm(f => ({ ...f, provider: e.target.value }))}>
+                    <option value="claude-code">Claude Code (Local CLI)</option>
+                    <option value="openclaw">OpenClaw (via SSH)</option>
+                    <option value="hermes">Hermes Agent (via SSH)</option>
+                    <option value="anthropic">Anthropic (Claude API)</option>
+                    <option value="openai-compat">OpenAI Compatible (Ollama, vLLM, etc.)</option>
+                  </select>
+                </div>
+
+                {form.provider === 'claude-code' && (
+                  <>
+                    <div className="form-row">
+                      <label>Working Directory</label>
+                      <input value={form.workDir || ''} onChange={e => setForm(f => ({ ...f, workDir: e.target.value }))} placeholder="e.g. ~/projects/myapp (blank = home dir)" />
+                      <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 4 }}>
+                        Each instance can target a different project folder
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <label>Model (optional)</label>
+                      <input value={form.model || ''} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} placeholder="e.g. claude-sonnet-4-20250514, claude-opus-4-20250514" />
+                    </div>
+                    <div className="form-row">
+                      <label>Claude binary path (optional)</label>
+                      <input value={form.claudePath || ''} onChange={e => setForm(f => ({ ...f, claudePath: e.target.value }))} placeholder="claude (default, uses PATH)" />
+                    </div>
+                    <div className="form-row">
+                      <label>Extra CLI args (optional)</label>
+                      <input value={form.claudeArgs || ''} onChange={e => setForm(f => ({ ...f, claudeArgs: e.target.value }))} placeholder="e.g. --permission-mode full --verbose" />
+                    </div>
+                    <div className="form-row">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <input type="checkbox" checked={form.continueSession || false} onChange={e => setForm(f => ({ ...f, continueSession: e.target.checked }))} style={{ width: 'auto' }} />
+                        Continue most recent session (--continue)
+                      </label>
+                    </div>
+                    <div className="form-row">
+                      <label>Timeout (seconds)</label>
+                      <input type="number" value={(form.timeout || 300000) / 1000} onChange={e => setForm(f => ({ ...f, timeout: (parseInt(e.target.value) || 300) * 1000 }))} placeholder="300" />
+                    </div>
+                  </>
+                )}
+
+                {form.provider === 'openclaw' && (
+                  <>
+                    <div className="form-row">
+                      <label>SSH Host</label>
+                      <input value={form.sshHost || ''} onChange={e => setForm(f => ({ ...f, sshHost: e.target.value }))} placeholder="157.180.23.7" />
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <div className="form-row" style={{ flex: 1 }}>
+                        <label>SSH User</label>
+                        <input value={form.sshUser || ''} onChange={e => setForm(f => ({ ...f, sshUser: e.target.value }))} placeholder="root" />
+                      </div>
+                      <div className="form-row" style={{ flex: 1 }}>
+                        <label>SSH Port</label>
+                        <input type="number" value={form.sshPort || 22} onChange={e => setForm(f => ({ ...f, sshPort: parseInt(e.target.value) || 22 }))} />
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <label>SSH Key Path (optional, uses default if blank)</label>
+                      <input value={form.sshKey || ''} onChange={e => setForm(f => ({ ...f, sshKey: e.target.value }))} placeholder="~/.ssh/id_rsa" />
+                    </div>
+                    <div className="form-row">
+                      <label>Gateway Token</label>
+                      <input type="password" value={form.apiKey || ''} onChange={e => setForm(f => ({ ...f, apiKey: e.target.value }))} placeholder="Your OpenClaw gateway token" />
+                    </div>
+                    <div className="form-row">
+                      <label>Agent ID (optional, uses default agent if blank)</label>
+                      <input value={form.openclawAgent || ''} onChange={e => setForm(f => ({ ...f, openclawAgent: e.target.value }))} placeholder="e.g. ops, main, coding" />
+                    </div>
+                  </>
+                )}
+
+                {form.provider === 'hermes' && (
+                  <>
+                    <div className="form-row">
+                      <label>SSH Host</label>
+                      <input value={form.sshHost || ''} onChange={e => setForm(f => ({ ...f, sshHost: e.target.value }))} placeholder="your-vps-ip" />
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <div className="form-row" style={{ flex: 1 }}>
+                        <label>SSH User</label>
+                        <input value={form.sshUser || ''} onChange={e => setForm(f => ({ ...f, sshUser: e.target.value }))} placeholder="root" />
+                      </div>
+                      <div className="form-row" style={{ flex: 1 }}>
+                        <label>SSH Port</label>
+                        <input type="number" value={form.sshPort || 22} onChange={e => setForm(f => ({ ...f, sshPort: parseInt(e.target.value) || 22 }))} />
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <label>SSH Key Path (optional)</label>
+                      <input value={form.sshKey || ''} onChange={e => setForm(f => ({ ...f, sshKey: e.target.value }))} placeholder="~/.ssh/id_rsa" />
+                    </div>
+                    <div className="form-row">
+                      <label>Model (optional, uses Hermes default if blank)</label>
+                      <input value={form.model || ''} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} placeholder="e.g. nous-hermes-3, gpt-4, etc." />
+                    </div>
+                    <div className="form-row">
+                      <label>Provider override (optional, e.g. openai, anthropic, ollama)</label>
+                      <input value={form.hermesProvider || ''} onChange={e => setForm(f => ({ ...f, hermesProvider: e.target.value }))} placeholder="Leave blank for Hermes default" />
+                    </div>
+                    <div className="form-row">
+                      <label>Worktree / workspace path (optional)</label>
+                      <input value={form.hermesWorktree || ''} onChange={e => setForm(f => ({ ...f, hermesWorktree: e.target.value }))} placeholder="e.g. /root/projects/myapp" />
+                    </div>
+                  </>
+                )}
+
+                {form.provider === 'openai-compat' && (
+                  <>
+                    <div className="form-row">
+                      <label>Base URL (no trailing slash)</label>
+                      <input value={form.baseUrl || ''} onChange={e => setForm(f => ({ ...f, baseUrl: e.target.value }))} placeholder="http://localhost:11434" />
+                      <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 4 }}>
+                        Common ports: 11434 (Ollama), 8000 (vLLM), 8080, 3000
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <label>API Key (optional for self-hosted)</label>
+                      <input type="password" value={form.apiKey || ''} onChange={e => setForm(f => ({ ...f, apiKey: e.target.value }))} placeholder="Leave blank if none required" />
+                    </div>
+                    <div className="form-row">
+                      <label>Model</label>
+                      <input value={form.model || ''} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} placeholder="e.g. gpt-4, llama3, etc." />
+                    </div>
+                  </>
+                )}
+
+                {form.provider === 'anthropic' && (
+                  <>
+                    <div className="form-row">
+                      <label>API Key</label>
+                      <input type="password" value={form.apiKey || ''} onChange={e => setForm(f => ({ ...f, apiKey: e.target.value }))} placeholder="sk-ant-..." />
+                    </div>
+                    <div className="form-row">
+                      <label>Model</label>
+                      <input value={form.model || ''} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} placeholder="claude-sonnet-4-20250514" />
+                    </div>
+                  </>
+                )}
+
+                <h3>Test Connection</h3>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <button className="btn btn-test" onClick={handleTest} disabled={testStatus === 'testing'}>
+                    {testStatus === 'testing' ? 'Testing...' : 'Test Connection'}
+                  </button>
+                  {form.provider === 'anthropic' && !form.apiKey && (
+                    <span style={{ fontSize: 11, color: 'var(--orange)' }}>API key required for Anthropic</span>
+                  )}
+                </div>
+                {testStatus && testStatus !== 'testing' && (
+                  <div className={`test-result ${testStatus.ok ? 'success' : 'failure'}`}>
+                    {testStatus.ok ? '✓ ' : '✗ '}{testStatus.msg}
+                  </div>
+                )}
+                {testStatus === 'testing' && (
+                  <div className="test-result testing">Connecting...</div>
+                )}
+
+                <h3>Behavior</h3>
+                <div className="form-row">
+                  <label>System Prompt</label>
+                  <input value={form.systemPrompt || ''} onChange={e => setForm(f => ({ ...f, systemPrompt: e.target.value }))} placeholder="You are a helpful assistant." />
+                </div>
+                <div className="form-row">
+                  <label>Max Tokens</label>
+                  <input type="number" value={form.maxTokens || 4096} onChange={e => setForm(f => ({ ...f, maxTokens: parseInt(e.target.value) || 16384 }))} />
+                </div>
+
+                <div className="form-actions" style={{ justifyContent: 'space-between' }}>
+                  {agents.find(a => a.id === form.id) ? (
+                    <button className="btn btn-danger" onClick={() => { if (confirm('Remove this agent?')) onRemove(form.id); }}>Remove</button>
+                  ) : <div />}
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button className="btn btn-ghost" onClick={() => { setEditAgent(null); setShowPresets(false); }}>Back</button>
+                    <button className="btn btn-primary" onClick={handleSave}>Save</button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ── Mount ──
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
