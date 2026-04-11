@@ -608,7 +608,7 @@ async function streamCodexLocal(event, requestId, agent, messages) {
 
   const codexPath = agent.codexPath || 'codex';
   const workDir = agent.workDir || process.env.HOME;
-  const args = [lastUserMsg.content, '--experimental-json', '--full-auto'];
+  const args = [lastUserMsg.content, '--experimental-json', '--full-auto', '--skip-git-repo-check'];
   if (agent.model) args.push('--model', agent.model);
   if (agent.codexArgs) {
     args.push(...agent.codexArgs.split(/\s+/).filter(Boolean));
@@ -621,6 +621,8 @@ async function streamCodexLocal(event, requestId, agent, messages) {
     });
 
     let buffer = '';
+    let stderrBuf = '';
+    let sentAnyContent = false;
 
     proc.stdout.on('data', (data) => {
       buffer += data.toString();
@@ -633,7 +635,7 @@ async function streamCodexLocal(event, requestId, agent, messages) {
           if (evt.type === 'message' && evt.message?.content) {
             for (const block of (Array.isArray(evt.message.content) ? evt.message.content : [])) {
               if (block.type === 'output_text' || block.type === 'text') {
-                if (block.text) event.sender.send('agent:stream-chunk', requestId, block.text);
+                if (block.text) { event.sender.send('agent:stream-chunk', requestId, block.text); sentAnyContent = true; }
               } else if (block.type === 'reasoning' || block.type === 'thinking') {
                 const t = block.text || block.thinking || '';
                 if (t) event.sender.send('agent:stream-thinking', requestId, t);
@@ -641,13 +643,13 @@ async function streamCodexLocal(event, requestId, agent, messages) {
             }
           }
           if (evt.type === 'text' || evt.type === 'output_text') {
-            if (evt.text) event.sender.send('agent:stream-chunk', requestId, evt.text);
+            if (evt.text) { event.sender.send('agent:stream-chunk', requestId, evt.text); sentAnyContent = true; }
           }
         } catch { /* skip non-JSON lines */ }
       }
     });
 
-    proc.stderr.on('data', () => {});
+    proc.stderr.on('data', (data) => { stderrBuf += data.toString(); });
 
     const timeout = agent.timeout || 300000;
     const timer = setTimeout(() => {
@@ -656,9 +658,15 @@ async function streamCodexLocal(event, requestId, agent, messages) {
       reject(new Error('Command timeout'));
     }, timeout);
 
-    proc.on('close', () => {
+    proc.on('close', (code) => {
       clearTimeout(timer);
-      event.sender.send('agent:stream-done', requestId, {});
+      if (!sentAnyContent && code !== 0 && stderrBuf.trim()) {
+        // Codex exited with an error and never sent any content — surface the error
+        const errMsg = stderrBuf.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').trim();
+        event.sender.send('agent:stream-error', requestId, errMsg || `Codex exited with code ${code}`);
+      } else {
+        event.sender.send('agent:stream-done', requestId, {});
+      }
       resolve();
     });
 
@@ -929,9 +937,10 @@ async function chatCodexLocal(agent, messages) {
   const workDir = agent.workDir || process.env.HOME;
   const escapedMsg = lastUserMsg.content;
 
-  // Use --experimental-json to get JSONL output (no TTY required) and
-  // --full-auto so Codex doesn't block waiting for interactive approval.
-  const args = [escapedMsg, '--experimental-json', '--full-auto'];
+  // Use --experimental-json to get JSONL output (no TTY required),
+  // --full-auto so Codex doesn't block waiting for interactive approval,
+  // and --skip-git-repo-check so it works outside git repos.
+  const args = [escapedMsg, '--experimental-json', '--full-auto', '--skip-git-repo-check'];
   if (agent.model) args.push('--model', agent.model);
   if (agent.codexArgs) {
     args.push(...agent.codexArgs.split(/\s+/).filter(Boolean));
