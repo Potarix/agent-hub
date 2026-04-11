@@ -83,7 +83,7 @@ function makeStreamRequest(url, options, body, event, requestId) {
           if (line.startsWith('data: ')) {
             const data = line.slice(6).trim();
             if (data === '[DONE]') {
-              event.sender.send('agent:stream-done', requestId);
+              event.sender.send('agent:stream-done', requestId, {});
             } else {
               try {
                 const parsed = JSON.parse(data);
@@ -94,7 +94,7 @@ function makeStreamRequest(url, options, body, event, requestId) {
           }
         }
       });
-      res.on('end', () => { event.sender.send('agent:stream-done', requestId); resolve(); });
+      res.on('end', () => { event.sender.send('agent:stream-done', requestId, {}); resolve(); });
     });
     req.on('error', (err) => { event.sender.send('agent:stream-error', requestId, err.message); reject(err); });
     req.setTimeout(120000, () => { req.destroy(); reject(new Error('timeout')); });
@@ -187,13 +187,13 @@ function streamSSHCommand(agent, command, event, requestId, timeout = 600000) {
 
     const timer = setTimeout(() => {
       proc.kill();
-      event.sender.send('agent:stream-done', requestId);
+      event.sender.send('agent:stream-done', requestId, {});
       resolve(fullOutput);
     }, timeout);
 
     proc.on('close', (code) => {
       clearTimeout(timer);
-      event.sender.send('agent:stream-done', requestId);
+      event.sender.send('agent:stream-done', requestId, {});
       resolve(fullOutput);
     });
 
@@ -272,13 +272,13 @@ async function streamOpenClaw(event, requestId, agent, messages) {
     const content = extractOpenClawResponse(output);
     // Send the full response as one chunk
     event.sender.send('agent:stream-chunk', requestId, content);
-    event.sender.send('agent:stream-done', requestId);
+    event.sender.send('agent:stream-done', requestId, {});
   } catch (err) {
     const errMsg = err.message || '';
     const content = extractOpenClawResponse(errMsg);
     if (content && !content.includes('Permission denied') && !content.includes('Connection refused')) {
       event.sender.send('agent:stream-chunk', requestId, content);
-      event.sender.send('agent:stream-done', requestId);
+      event.sender.send('agent:stream-done', requestId, {});
     } else {
       event.sender.send('agent:stream-error', requestId, err.message);
     }
@@ -509,6 +509,165 @@ async function chatClaudeCode(agent, messages) {
     }
     return { error: msg };
   }
+}
+
+async function streamClaudeCode(event, requestId, agent, messages) {
+  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+  if (!lastUserMsg) {
+    event.sender.send('agent:stream-error', requestId, 'No user message found');
+    return;
+  }
+
+  const claudePath = agent.claudePath || 'claude';
+  const workDir = agent.workDir || process.env.HOME;
+  const args = ['-p', lastUserMsg.content, '--output-format', 'stream-json', '--verbose'];
+  if (agent.model) args.push('--model', agent.model);
+
+  const permMode = agent.permissionMode || 'acceptEdits';
+  args.push('--permission-mode', permMode);
+
+  if (agent.claudeArgs) {
+    args.push(...agent.claudeArgs.split(/\s+/).filter(Boolean));
+  }
+  if (agent.sessionId) {
+    args.push('--continue', agent.sessionId);
+  } else if (agent.continueSession) {
+    args.push('--continue');
+  }
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn(claudePath, args, {
+      env: { ...getLoginEnv() },
+      cwd: workDir,
+    });
+
+    let buffer = '';
+    let sessionId = null;
+
+    proc.stdout.on('data', (data) => {
+      buffer += data.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // keep incomplete last line in buffer
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const evt = JSON.parse(line);
+          if (evt.type === 'assistant' && evt.message?.content) {
+            for (const block of evt.message.content) {
+              if (block.type === 'thinking' && block.thinking) {
+                event.sender.send('agent:stream-thinking', requestId, block.thinking);
+              } else if (block.type === 'text' && block.text) {
+                event.sender.send('agent:stream-chunk', requestId, block.text);
+              }
+            }
+          }
+          if (evt.type === 'content_block_delta') {
+            if (evt.delta?.type === 'text_delta' && evt.delta.text) {
+              event.sender.send('agent:stream-chunk', requestId, evt.delta.text);
+            } else if (evt.delta?.type === 'thinking_delta' && evt.delta.thinking) {
+              event.sender.send('agent:stream-thinking', requestId, evt.delta.thinking);
+            }
+          }
+          if (evt.type === 'result') {
+            sessionId = evt.session_id || null;
+            // Don't re-send evt.result — it duplicates the already-streamed content_block_delta text
+          }
+        } catch { /* skip non-JSON lines */ }
+      }
+    });
+
+    proc.stderr.on('data', () => { /* ignore stderr */ });
+
+    const timeout = agent.timeout || 300000;
+    const timer = setTimeout(() => {
+      proc.kill();
+      event.sender.send('agent:stream-error', requestId, 'Command timeout');
+      reject(new Error('Command timeout'));
+    }, timeout);
+
+    proc.on('close', () => {
+      clearTimeout(timer);
+      event.sender.send('agent:stream-done', requestId, { sessionId });
+      resolve();
+    });
+
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      event.sender.send('agent:stream-error', requestId, err.message);
+      reject(err);
+    });
+  });
+}
+
+async function streamCodexLocal(event, requestId, agent, messages) {
+  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+  if (!lastUserMsg) {
+    event.sender.send('agent:stream-error', requestId, 'No user message found');
+    return;
+  }
+
+  const codexPath = agent.codexPath || 'codex';
+  const workDir = agent.workDir || process.env.HOME;
+  const args = [lastUserMsg.content, '--experimental-json', '--full-auto'];
+  if (agent.model) args.push('--model', agent.model);
+  if (agent.codexArgs) {
+    args.push(...agent.codexArgs.split(/\s+/).filter(Boolean));
+  }
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn(codexPath, args, {
+      env: { ...getLoginEnv() },
+      cwd: workDir,
+    });
+
+    let buffer = '';
+
+    proc.stdout.on('data', (data) => {
+      buffer += data.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const evt = JSON.parse(line);
+          if (evt.type === 'message' && evt.message?.content) {
+            for (const block of (Array.isArray(evt.message.content) ? evt.message.content : [])) {
+              if (block.type === 'output_text' || block.type === 'text') {
+                if (block.text) event.sender.send('agent:stream-chunk', requestId, block.text);
+              } else if (block.type === 'reasoning' || block.type === 'thinking') {
+                const t = block.text || block.thinking || '';
+                if (t) event.sender.send('agent:stream-thinking', requestId, t);
+              }
+            }
+          }
+          if (evt.type === 'text' || evt.type === 'output_text') {
+            if (evt.text) event.sender.send('agent:stream-chunk', requestId, evt.text);
+          }
+        } catch { /* skip non-JSON lines */ }
+      }
+    });
+
+    proc.stderr.on('data', () => {});
+
+    const timeout = agent.timeout || 300000;
+    const timer = setTimeout(() => {
+      proc.kill();
+      event.sender.send('agent:stream-error', requestId, 'Command timeout');
+      reject(new Error('Command timeout'));
+    }, timeout);
+
+    proc.on('close', () => {
+      clearTimeout(timer);
+      event.sender.send('agent:stream-done', requestId, {});
+      resolve();
+    });
+
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      event.sender.send('agent:stream-error', requestId, err.message);
+      reject(err);
+    });
+  });
 }
 
 async function pingClaudeCode(agent) {
@@ -1005,7 +1164,24 @@ ipcMain.handle('agent:chat', async (_event, agent, messages) => {
 
 ipcMain.on('agent:chat-stream', async (event, requestId, agent, messages) => {
   try {
-    if (agent.provider === 'openclaw') await streamOpenClaw(event, requestId, agent, messages);
+    if (agent.provider === 'claude-code') await streamClaudeCode(event, requestId, agent, messages);
+    else if (agent.provider === 'codex') await streamCodexLocal(event, requestId, agent, messages);
+    else if (agent.provider === 'openclaw') await streamOpenClaw(event, requestId, agent, messages);
+    else if (agent.provider === 'openclaw-local') await streamOpenClaw(event, requestId, agent, messages);
+    else if (agent.provider === 'hermes' || agent.provider === 'hermes-local' || agent.provider === 'codex-ssh') {
+      // Providers without streaming: run non-streaming chat and emit result as a single chunk
+      const chatFn = agent.provider === 'hermes' ? chatHermes
+        : agent.provider === 'hermes-local' ? chatHermesLocal
+        : chatCodexSSH;
+      const res = await chatFn(agent, messages);
+      if (res.error) {
+        event.sender.send('agent:stream-error', requestId, res.error);
+      } else {
+        if (res.thinking) event.sender.send('agent:stream-thinking', requestId, res.thinking);
+        if (res.content) event.sender.send('agent:stream-chunk', requestId, res.content);
+        event.sender.send('agent:stream-done', requestId, { sessionId: res.sessionId || null });
+      }
+    }
     else await streamOpenAI(event, requestId, agent, messages);
   } catch (err) {
     event.sender.send('agent:stream-error', requestId, err.message);

@@ -1190,20 +1190,75 @@
       const [input, setInput] = useState('');
       const [loading, setLoading] = useState(false);
       const [streamText, setStreamText] = useState('');
+      const [streamThinking, setStreamThinking] = useState('');
       const [slashCommands, setSlashCommands] = useState([]);
       const [showSlash, setShowSlash] = useState(false);
       const [slashIdx, setSlashIdx] = useState(0);
       const [showThinking, setShowThinking] = useState(true);
       const bottomRef = useRef(null);
       const inputRef = useRef(null);
+      const streamTextRef = useRef('');
+      const streamThinkingRef = useRef('');
+      const activeRequestIdRef = useRef(null);
 
       useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }, [messages, streamText]);
+      }, [messages, streamText, streamThinking]);
 
       useEffect(() => {
         inputRef.current?.focus();
       }, [agent.id]);
+
+      // Set up stream listeners
+      useEffect(() => {
+        window.agentHub.removeStreamListeners();
+
+        window.agentHub.onStreamChunk((id, text) => {
+          if (id !== activeRequestIdRef.current) return;
+          streamTextRef.current += text;
+          setStreamText(streamTextRef.current);
+        });
+
+        window.agentHub.onStreamThinking((id, text) => {
+          if (id !== activeRequestIdRef.current) return;
+          streamThinkingRef.current += text;
+          setStreamThinking(streamThinkingRef.current);
+        });
+
+        window.agentHub.onStreamDone((id, meta) => {
+          if (id !== activeRequestIdRef.current) return;
+          const content = streamTextRef.current;
+          const thinking = streamThinkingRef.current || null;
+          if (content) {
+            const msg = { role: 'assistant', content };
+            if (thinking) msg.thinking = thinking;
+            setMessages(prev => [...prev, msg]);
+          }
+          // Persist Claude Code session ID
+          if (meta?.sessionId && !agent.sessionId && onUpdateAgent) {
+            onUpdateAgent({ ...agent, sessionId: meta.sessionId });
+          }
+          streamTextRef.current = '';
+          streamThinkingRef.current = '';
+          activeRequestIdRef.current = null;
+          setStreamText('');
+          setStreamThinking('');
+          setLoading(false);
+        });
+
+        window.agentHub.onStreamError((id, err) => {
+          if (id !== activeRequestIdRef.current) return;
+          setMessages(prev => [...prev, { role: 'error', content: err || 'Something went wrong' }]);
+          streamTextRef.current = '';
+          streamThinkingRef.current = '';
+          activeRequestIdRef.current = null;
+          setStreamText('');
+          setStreamThinking('');
+          setLoading(false);
+        });
+
+        return () => window.agentHub.removeStreamListeners();
+      }, [agent.id, agent.sessionId]);
 
       // Load slash commands for this provider
       useEffect(() => {
@@ -1258,7 +1313,6 @@
         try {
           const res = await window.agentHub.execSlash(agent, cmd);
           if (res.local) {
-            // Shouldn't get here since we handle local above, but just in case
             setMessages(prev => [...prev, { role: 'system', content: `${res.command} executed` }]);
           } else if (res.error) {
             setMessages(prev => [...prev, { role: 'error', content: res.error }]);
@@ -1273,16 +1327,14 @@
         }
       };
 
-      const pendingCountRef = useRef(0);
-
-      const sendMessage = async () => {
+      const sendMessage = () => {
         const text = input.trim();
         if (!text) return;
 
         // If it's a slash command, route it (still sequential)
         if (text.startsWith('/')) {
           if (loadingRef.current) return;
-          await executeSlashCommand(text);
+          executeSlashCommand(text);
           return;
         }
 
@@ -1291,39 +1343,23 @@
         setInput('');
         if (inputRef.current) inputRef.current.style.height = 'auto';
 
-        pendingCountRef.current += 1;
-        loadingRef.current = true;
+        // Reset stream state
+        streamTextRef.current = '';
+        streamThinkingRef.current = '';
+        setStreamText('');
+        setStreamThinking('');
         setLoading(true);
 
-        // Build API messages from current state + new user message
+        // Build API messages
         const apiMessages = [];
         if (agent.systemPrompt) apiMessages.push({ role: 'system', content: agent.systemPrompt });
         const allMsgs = [...(messages || []), userMsg];
         apiMessages.push(...allMsgs.slice(-20));
 
-        try {
-          const res = await window.agentHub.chat(agent, apiMessages);
-          if (res.error) {
-            setMessages(prev => [...prev, { role: 'error', content: res.error }]);
-          } else if (res.content) {
-            const msg = { role: 'assistant', content: res.content };
-            if (res.thinking) msg.thinking = res.thinking;
-            setMessages(prev => [...prev, msg]);
-          }
-          // Persist Claude Code session ID for conversation continuity
-          if (res.sessionId && !agent.sessionId && onUpdateAgent) {
-            onUpdateAgent({ ...agent, sessionId: res.sessionId });
-          }
-        } catch (err) {
-          setMessages(prev => [...prev, { role: 'error', content: err.message || 'Something went wrong' }]);
-        } finally {
-          pendingCountRef.current -= 1;
-          if (pendingCountRef.current <= 0) {
-            pendingCountRef.current = 0;
-            loadingRef.current = false;
-            setLoading(false);
-          }
-        }
+        // Generate a unique request ID and start streaming
+        const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+        activeRequestIdRef.current = requestId;
+        window.agentHub.chatStream(requestId, agent, apiMessages);
       };
 
       const onKeyDown = (e) => {
@@ -1412,10 +1448,15 @@
                 )}
               </div>
             ))}
-            {loading && streamText && (
-              <div className="msg assistant">{streamText}</div>
+            {loading && (streamText || streamThinking) && (
+              <div className="msg assistant">
+                {showThinking && streamThinking && (
+                  <ThinkingBlock thinking={streamThinking} />
+                )}
+                {streamText}
+              </div>
             )}
-            {loading && !streamText && (
+            {loading && !streamText && !streamThinking && (
               <div className="typing-indicator">
                 <span /><span /><span />
               </div>

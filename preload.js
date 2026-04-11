@@ -7,12 +7,14 @@ contextBridge.exposeInMainWorld('agentHub', {
   // Streaming chat
   chatStream: (requestId, agent, messages) => ipcRenderer.send('agent:chat-stream', requestId, agent, messages),
   onStreamChunk: (cb) => ipcRenderer.on('agent:stream-chunk', (_e, id, text) => cb(id, text)),
-  onStreamDone: (cb) => ipcRenderer.on('agent:stream-done', (_e, id) => cb(id)),
+  onStreamThinking: (cb) => ipcRenderer.on('agent:stream-thinking', (_e, id, text) => cb(id, text)),
+  onStreamDone: (cb) => ipcRenderer.on('agent:stream-done', (_e, id, meta) => cb(id, meta)),
   onStreamError: (cb) => ipcRenderer.on('agent:stream-error', (_e, id, err) => cb(id, err)),
 
   // Remove stream listeners
   removeStreamListeners: () => {
     ipcRenderer.removeAllListeners('agent:stream-chunk');
+    ipcRenderer.removeAllListeners('agent:stream-thinking');
     ipcRenderer.removeAllListeners('agent:stream-done');
     ipcRenderer.removeAllListeners('agent:stream-error');
   },
