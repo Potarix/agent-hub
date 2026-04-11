@@ -6,6 +6,8 @@ const { spawn, exec, execSync } = require('child_process');
 const os = require('os');
 
 let mainWindow;
+// Map of requestId -> spawned Claude process (for sending permission responses via stdin)
+const activeClaudeProcs = new Map();
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -129,10 +131,17 @@ function runSSHCommand(agent, command, timeout = 120000) {
     proc.stdout.on('data', (d) => { stdout += d.toString(); });
     proc.stderr.on('data', (d) => { stderr += d.toString(); });
 
-    const timer = setTimeout(() => {
+    let timer = setTimeout(() => {
       proc.kill();
       reject(new Error('SSH command timeout'));
     }, timeout);
+    const resetTimer = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { proc.kill(); reject(new Error('SSH command timeout')); }, timeout);
+    };
+
+    proc.stdout.on('data', resetTimer);
+    proc.stderr.on('data', resetTimer);
 
     proc.on('close', (code) => {
       clearTimeout(timer);
@@ -185,11 +194,22 @@ function streamSSHCommand(agent, command, event, requestId, timeout = 600000) {
       }
     });
 
-    const timer = setTimeout(() => {
+    let timer = setTimeout(() => {
       proc.kill();
       event.sender.send('agent:stream-done', requestId, {});
       resolve(fullOutput);
     }, timeout);
+    const resetTimer = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        proc.kill();
+        event.sender.send('agent:stream-done', requestId, {});
+        resolve(fullOutput);
+      }, timeout);
+    };
+
+    proc.stdout.on('data', resetTimer);
+    proc.stderr.on('data', resetTimer);
 
     proc.on('close', (code) => {
       clearTimeout(timer);
@@ -394,10 +414,17 @@ function runLocalCommand(command, args, options = {}) {
     proc.stderr.on('data', (d) => { stderr += d.toString(); });
 
     const timeout = options.timeout || 300000;
-    const timer = setTimeout(() => {
+    let timer = setTimeout(() => {
       proc.kill();
       reject(new Error('Command timeout'));
     }, timeout);
+    const resetTimer = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { proc.kill(); reject(new Error('Command timeout')); }, timeout);
+    };
+
+    proc.stdout.on('data', resetTimer);
+    proc.stderr.on('data', resetTimer);
 
     proc.on('close', (code) => {
       clearTimeout(timer);
@@ -558,6 +585,9 @@ async function streamClaudeCode(event, requestId, agent, messages) {
       cwd: workDir,
     });
 
+    // Store process reference so we can write permission responses to stdin
+    activeClaudeProcs.set(requestId, proc);
+
     let buffer = '';
     let sessionId = null;
     const pendingToolUses = {};  // tool_use_id -> { tool, input }
@@ -593,6 +623,15 @@ async function streamClaudeCode(event, requestId, agent, messages) {
               event.sender.send('agent:stream-thinking', requestId, evt.delta.thinking);
             }
           }
+          // Handle real-time permission requests from Claude Code subprocess
+          if (evt.type === 'system' && evt.subtype === 'permission_request') {
+            event.sender.send('agent:permission-request', requestId, {
+              toolUseId: evt.tool_use_id || evt.uuid,
+              tool: evt.tool_name || 'unknown',
+              input: evt.tool_input || {},
+              suggestions: evt.permission_suggestions || [],
+            });
+          }
           if (evt.type === 'result') {
             sessionId = evt.session_id || null;
             // Emit permission denials if any tools were blocked
@@ -614,20 +653,34 @@ async function streamClaudeCode(event, requestId, agent, messages) {
     proc.stderr.on('data', () => { /* ignore stderr */ });
 
     const timeout = agent.timeout || 300000;
-    const timer = setTimeout(() => {
+    let timer = setTimeout(() => {
       proc.kill();
+      activeClaudeProcs.delete(requestId);
       event.sender.send('agent:stream-error', requestId, 'Command timeout');
       reject(new Error('Command timeout'));
     }, timeout);
+    const resetTimer = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        proc.kill();
+        activeClaudeProcs.delete(requestId);
+        event.sender.send('agent:stream-error', requestId, 'Command timeout');
+        reject(new Error('Command timeout'));
+      }, timeout);
+    };
+
+    proc.stdout.on('data', resetTimer);
 
     proc.on('close', () => {
       clearTimeout(timer);
+      activeClaudeProcs.delete(requestId);
       event.sender.send('agent:stream-done', requestId, { sessionId });
       resolve();
     });
 
     proc.on('error', (err) => {
       clearTimeout(timer);
+      activeClaudeProcs.delete(requestId);
       event.sender.send('agent:stream-error', requestId, err.message);
       reject(err);
     });
@@ -687,11 +740,22 @@ async function streamCodexLocal(event, requestId, agent, messages) {
     proc.stderr.on('data', (data) => { stderrBuf += data.toString(); });
 
     const timeout = agent.timeout || 300000;
-    const timer = setTimeout(() => {
+    let timer = setTimeout(() => {
       proc.kill();
       event.sender.send('agent:stream-error', requestId, 'Command timeout');
       reject(new Error('Command timeout'));
     }, timeout);
+    const resetTimer = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        proc.kill();
+        event.sender.send('agent:stream-error', requestId, 'Command timeout');
+        reject(new Error('Command timeout'));
+      }, timeout);
+    };
+
+    proc.stdout.on('data', resetTimer);
+    proc.stderr.on('data', resetTimer);
 
     proc.on('close', (code) => {
       clearTimeout(timer);
@@ -1355,6 +1419,20 @@ ipcMain.on('agent:chat-stream', async (event, requestId, agent, messages) => {
   } catch (err) {
     event.sender.send('agent:stream-error', requestId, err.message);
   }
+});
+
+// Handle permission responses from the renderer — writes approval/denial to Claude's stdin
+ipcMain.on('agent:permission-response', (_event, requestId, toolUseId, decision) => {
+  const proc = activeClaudeProcs.get(requestId);
+  if (!proc || proc.killed) return;
+  try {
+    const response = JSON.stringify({
+      type: 'tool_permission_response',
+      tool_use_id: toolUseId,
+      decision,
+    });
+    proc.stdin.write(response + '\n');
+  } catch { /* process may have exited */ }
 });
 
 ipcMain.handle('agent:ping', async (_event, agent) => {

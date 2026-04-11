@@ -513,6 +513,114 @@
     }
 
     /* Permission denial banner */
+    /* Real-time tool approval request (shown during streaming) */
+    .tool-approval-request {
+      align-self: stretch;
+      background: color-mix(in srgb, var(--accent, #7c6aff) 6%, var(--bg-1));
+      border: 1px solid color-mix(in srgb, var(--accent, #7c6aff) 30%, transparent);
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin: 6px 0;
+      animation: msgIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .tool-approval-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .tool-approval-icon {
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--accent, #7c6aff) 15%, transparent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+    .tool-approval-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent, #7c6aff);
+    }
+    .tool-approval-waiting {
+      font-size: 11px;
+      color: var(--text-2);
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .tool-approval-waiting .pulse {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent, #7c6aff);
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.3; }
+      50% { opacity: 1; }
+    }
+    .tool-approval-detail {
+      font-size: 12px;
+      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+      color: var(--text-1);
+      padding: 8px 10px;
+      background: color-mix(in srgb, var(--accent, #7c6aff) 4%, var(--bg-0));
+      border-radius: 6px;
+      margin-bottom: 10px;
+      word-break: break-all;
+      white-space: pre-wrap;
+      max-height: 120px;
+      overflow-y: auto;
+    }
+    .tool-approval-actions {
+      display: flex;
+      gap: 8px;
+    }
+    .tool-approval-actions button {
+      padding: 6px 16px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.15s;
+    }
+    .tool-approval-actions .btn-approve {
+      background: #22c55e;
+      color: #fff;
+      border-color: #22c55e;
+    }
+    .tool-approval-actions .btn-approve:hover {
+      filter: brightness(1.1);
+    }
+    .tool-approval-actions .btn-deny {
+      background: color-mix(in srgb, #ef4444 12%, transparent);
+      color: #ef4444;
+      border-color: color-mix(in srgb, #ef4444 30%, transparent);
+    }
+    .tool-approval-actions .btn-deny:hover {
+      background: color-mix(in srgb, #ef4444 20%, transparent);
+    }
+    .tool-approval-resolved {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+    .tool-approval-resolved .tool-approval-actions {
+      display: none;
+    }
+    .tool-approval-status {
+      font-size: 11px;
+      font-weight: 500;
+      margin-top: 4px;
+    }
+    .tool-approval-status.approved { color: #22c55e; }
+    .tool-approval-status.denied { color: #ef4444; }
+
     .permission-banner {
       align-self: center;
       max-width: 85%;
@@ -1363,6 +1471,44 @@
       );
     }
 
+    function ToolApprovalRequest({ request, onApprove, onDeny, resolved }) {
+      let detail = request.tool;
+      if (request.tool === 'Bash' && request.input?.command) {
+        detail = `$ ${request.input.command}`;
+      } else if ((request.tool === 'Write' || request.tool === 'Edit' || request.tool === 'Read') && request.input?.file_path) {
+        detail = `${request.tool}: ${request.input.file_path}`;
+      } else if ((request.tool === 'Grep' || request.tool === 'Glob') && request.input?.pattern) {
+        detail = `${request.tool}: ${request.input.pattern}`;
+      } else if (request.input) {
+        const preview = JSON.stringify(request.input);
+        detail = `${request.tool}: ${preview.length > 200 ? preview.slice(0, 200) + '...' : preview}`;
+      }
+
+      return (
+        <div className={`tool-approval-request${resolved ? ' tool-approval-resolved' : ''}`}>
+          <div className="tool-approval-header">
+            <div className="tool-approval-icon">{'\u26A0'}</div>
+            <div className="tool-approval-title">Approve {request.tool}?</div>
+            {!resolved && (
+              <div className="tool-approval-waiting">
+                <div className="pulse" />
+                Waiting for approval
+              </div>
+            )}
+          </div>
+          <div className="tool-approval-detail">{detail}</div>
+          {!resolved && (
+            <div className="tool-approval-actions">
+              <button className="btn-approve" onClick={() => onApprove(request)}>Allow</button>
+              <button className="btn-deny" onClick={() => onDeny(request)}>Deny</button>
+            </div>
+          )}
+          {resolved === 'approved' && <div className="tool-approval-status approved">Approved</div>}
+          {resolved === 'denied' && <div className="tool-approval-status denied">Denied</div>}
+        </div>
+      );
+    }
+
     function ChatView({ agent, status, messages, setMessages, onUpdateAgent }) {
       const [input, setInput] = useState('');
       const [loading, setLoading] = useState(false);
@@ -1370,6 +1516,8 @@
       const [streamThinking, setStreamThinking] = useState('');
       const [toolUses, setToolUses] = useState([]);
       const [permDenials, setPermDenials] = useState(null);
+      const [permRequests, setPermRequests] = useState([]);  // real-time approval requests
+      const [resolvedPerms, setResolvedPerms] = useState({}); // toolUseId -> 'approved'|'denied'
       const [lastUserMessage, setLastUserMessage] = useState('');
       const [sessionAllowedTools, setSessionAllowedTools] = useState([]);
       const [slashCommands, setSlashCommands] = useState([]);
@@ -1388,7 +1536,7 @@
 
       useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }, [messages, streamText, streamThinking]);
+      }, [messages, streamText, streamThinking, permRequests]);
 
       useEffect(() => {
         inputRef.current?.focus();
@@ -1432,6 +1580,8 @@
           setStreamText('');
           setStreamThinking('');
           setToolUses([]);
+          setPermRequests([]);
+          setResolvedPerms({});
           setLoading(false);
         });
 
@@ -1445,6 +1595,8 @@
           setStreamText('');
           setStreamThinking('');
           setToolUses([]);
+          setPermRequests([]);
+          setResolvedPerms({});
           setLoading(false);
         });
 
@@ -1459,6 +1611,11 @@
           setPermDenials(denials);
         });
 
+        const offPermRequest = window.agentHub.onPermissionRequest((id, request) => {
+          if (cancelled || id !== activeRequestIdRef.current) return;
+          setPermRequests(prev => [...prev, { ...request, requestId: id }]);
+        });
+
         return () => {
           cancelled = true;
           offChunk();
@@ -1467,6 +1624,7 @@
           offError();
           offToolUse();
           offPermDenied();
+          offPermRequest();
         };
       }, [agent.id]);
 
@@ -1576,6 +1734,8 @@
         setStreamThinking('');
         setToolUses([]);
         setPermDenials(null);
+        setPermRequests([]);
+        setResolvedPerms({});
         setLoading(true);
 
         // Build API messages
@@ -1597,6 +1757,8 @@
         // Add to session-allowed tools (not persisted to agent config)
         setSessionAllowedTools(prev => [...new Set([...prev, ...deniedTools])]);
         setPermDenials(null);
+        setPermRequests([]);
+        setResolvedPerms({});
 
         // Reset stream state for retry
         streamTextRef.current = '';
@@ -1628,6 +1790,8 @@
         // Also update session tools and retry
         setSessionAllowedTools(prev => [...new Set([...prev, ...deniedTools])]);
         setPermDenials(null);
+        setPermRequests([]);
+        setResolvedPerms({});
 
         streamTextRef.current = '';
         streamThinkingRef.current = '';
@@ -1649,6 +1813,27 @@
 
       const handleDismissDenials = () => {
         setPermDenials(null);
+      };
+
+      // Real-time permission approval/denial
+      const handleApproveRequest = (request) => {
+        const reqId = activeRequestIdRef.current;
+        if (!reqId) return;
+        window.agentHub.sendPermissionResponse(reqId, request.toolUseId, {
+          behavior: 'allow',
+          updated_input: request.input,
+        });
+        setResolvedPerms(prev => ({ ...prev, [request.toolUseId]: 'approved' }));
+      };
+
+      const handleDenyRequest = (request) => {
+        const reqId = activeRequestIdRef.current;
+        if (!reqId) return;
+        window.agentHub.sendPermissionResponse(reqId, request.toolUseId, {
+          behavior: 'deny',
+          message: 'User denied this action',
+        });
+        setResolvedPerms(prev => ({ ...prev, [request.toolUseId]: 'denied' }));
       };
 
       const onKeyDown = (e) => {
@@ -1737,7 +1922,7 @@
                 )}
               </div>
             ))}
-            {loading && (streamText || streamThinking || toolUses.length > 0) && (
+            {loading && (streamText || streamThinking || toolUses.length > 0 || permRequests.length > 0) && (
               <div className="msg assistant">
                 {showThinking && streamThinking && (
                   <ThinkingBlock thinking={streamThinking} />
@@ -1750,13 +1935,26 @@
                     })}
                   </div>
                 )}
+                {permRequests.length > 0 && (
+                  <div style={{ marginBottom: streamText ? 6 : 0 }}>
+                    {permRequests.map((pr) => (
+                      <ToolApprovalRequest
+                        key={pr.toolUseId}
+                        request={pr}
+                        onApprove={handleApproveRequest}
+                        onDeny={handleDenyRequest}
+                        resolved={resolvedPerms[pr.toolUseId] || null}
+                      />
+                    ))}
+                  </div>
+                )}
                 {streamText}
                 <span className="streaming-indicator">
                   <span /><span /><span />
                 </span>
               </div>
             )}
-            {loading && !streamText && !streamThinking && toolUses.length === 0 && (
+            {loading && !streamText && !streamThinking && toolUses.length === 0 && permRequests.length === 0 && (
               <div className="typing-indicator">
                 <span /><span /><span />
               </div>
@@ -1975,7 +2173,7 @@
                         <option value="bypassPermissions">Bypass Permissions (approve everything)</option>
                       </select>
                       <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 4 }}>
-                        Controls which actions Claude can take without approval. Since Agent Hub runs non-interactively, blocked tools will cause errors. Use "Bypass Permissions" or add specific tools below.
+                        Controls which actions Claude can take without approval. In Default mode, you'll be prompted to approve or deny each tool use inline.
                       </div>
                     </div>
                     <div className="form-row">

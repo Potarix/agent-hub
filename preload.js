@@ -14,8 +14,12 @@ contextBridge.exposeInMainWorld('agentHub', {
   // Tool use activity (inline indicators during streaming)
   onStreamToolUse: (cb) => { const handler = (_e, id, toolInfo) => cb(id, toolInfo); ipcRenderer.on('agent:stream-tool-use', handler); return () => ipcRenderer.removeListener('agent:stream-tool-use', handler); },
 
-  // Permission denial events
+  // Permission denial events (after-the-fact)
   onPermissionDenied: (cb) => { const handler = (_e, id, denials) => cb(id, denials); ipcRenderer.on('agent:permission-denied', handler); return () => ipcRenderer.removeListener('agent:permission-denied', handler); },
+
+  // Real-time permission request events (interactive approval)
+  onPermissionRequest: (cb) => { const handler = (_e, id, request) => cb(id, request); ipcRenderer.on('agent:permission-request', handler); return () => ipcRenderer.removeListener('agent:permission-request', handler); },
+  sendPermissionResponse: (requestId, toolUseId, decision) => ipcRenderer.send('agent:permission-response', requestId, toolUseId, decision),
 
   // Remove all stream listeners (legacy, used by App-level cleanup)
   removeStreamListeners: () => {
@@ -25,6 +29,7 @@ contextBridge.exposeInMainWorld('agentHub', {
     ipcRenderer.removeAllListeners('agent:stream-error');
     ipcRenderer.removeAllListeners('agent:stream-tool-use');
     ipcRenderer.removeAllListeners('agent:permission-denied');
+    ipcRenderer.removeAllListeners('agent:permission-request');
   },
 
   // Ping agent
