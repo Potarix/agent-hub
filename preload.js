@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('agentHub', {
 
   // Slash commands
   getSlashCommands: (provider) => ipcRenderer.invoke('agent:slash-commands', provider),
+  discoverSlashCommands: (agent) => ipcRenderer.invoke('agent:discover-slash-commands', agent),
   execSlash: (agent, command) => ipcRenderer.invoke('agent:exec-slash', agent, command),
 
   // Auth (in-app, no terminal needed)

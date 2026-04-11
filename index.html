@@ -1260,12 +1260,17 @@
         return () => window.agentHub.removeStreamListeners();
       }, [agent.id, agent.sessionId]);
 
-      // Load slash commands for this provider
+      // Discover slash commands dynamically from the CLI tool
       useEffect(() => {
+        // Start with cached/local commands immediately
         window.agentHub.getSlashCommands(agent.provider).then(cmds => {
           setSlashCommands(cmds || []);
         });
-      }, [agent.provider]);
+        // Then discover full commands from the CLI in the background
+        window.agentHub.discoverSlashCommands(agent).then(cmds => {
+          if (cmds && cmds.length > 0) setSlashCommands(cmds);
+        }).catch(() => {}); // silently fall back to cached
+      }, [agent.provider, agent.id]);
 
       // Filter slash commands based on input
       const filteredCommands = React.useMemo(() => {

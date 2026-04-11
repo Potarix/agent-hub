@@ -1022,61 +1022,180 @@ async function pingCodexSSH(agent) {
 
 // ── Slash Commands ──
 
-// Define available slash commands per provider
-const SLASH_COMMANDS = {
+// Universal local-only commands (always available, handled in renderer)
+const LOCAL_COMMANDS = {
+  '/clear': { desc: 'Clear chat history' },
+  '/status': { desc: 'Check connection status' },
+};
+
+// How to discover and execute commands for each provider
+const PROVIDER_CONFIG = {
   'claude-code': {
-    '/help': { desc: 'Show available commands', cmd: (agent) => ({ cli: 'claude', args: ['-p', '/help'], cwd: agent.workDir || process.env.HOME }) },
-    '/model': { desc: 'Show or change model', cmd: (agent, arg) => arg ? { result: `Model set to: ${arg}` , setField: { model: arg } } : { cli: 'claude', args: ['-p', '/model'], cwd: agent.workDir || process.env.HOME } },
-    '/cost': { desc: 'Show session cost', cmd: (agent) => ({ cli: 'claude', args: ['-p', '/cost'], cwd: agent.workDir || process.env.HOME }) },
-    '/compact': { desc: 'Compact conversation history', cmd: (agent) => ({ cli: 'claude', args: ['-p', '/compact'], cwd: agent.workDir || process.env.HOME }) },
-    '/clear': { desc: 'Clear chat history', local: true },
-    '/status': { desc: 'Check connection status', local: true },
-    '/doctor': { desc: 'Run Claude doctor diagnostics', cmd: (agent) => ({ cli: 'claude', args: ['-p', '/doctor'], cwd: agent.workDir || process.env.HOME }) },
+    discoverCmd: (agent) => ({ cli: 'claude', args: ['-p', '/help'], cwd: agent.workDir || process.env.HOME }),
+    execCmd: (agent, slashCmd, arg) => ({ cli: 'claude', args: ['-p', `${slashCmd}${arg ? ' ' + arg : ''}`], cwd: agent.workDir || process.env.HOME }),
+    parseHelp: (output) => {
+      // Parse Claude Code /help output: lines like "/command  description" or "/command - description"
+      const cmds = [];
+      const lines = output.split('\n');
+      for (const line of lines) {
+        const match = line.match(/^\s*(\/\w[\w-]*)\s+[-–—:]?\s*(.+)/);
+        if (match) {
+          const name = match[1].toLowerCase();
+          if (!LOCAL_COMMANDS[name]) {
+            cmds.push({ name, desc: match[2].trim() });
+          }
+        }
+      }
+      return cmds;
+    },
   },
   'openclaw': {
-    '/help': { desc: 'Show available commands', cmd: (agent) => ({ ssh: true, command: 'openclaw --help 2>&1' }) },
-    '/agents': { desc: 'List available agents', cmd: (agent) => ({ ssh: true, command: 'openclaw agent list --json 2>&1 || openclaw agent list 2>&1' }) },
-    '/status': { desc: 'Check agent status', cmd: (agent) => ({ ssh: true, command: 'openclaw status --json 2>&1 || openclaw status 2>&1' }) },
-    '/clear': { desc: 'Clear chat history', local: true },
+    discoverCmd: (agent) => ({ ssh: true, agent, command: 'openclaw --help 2>&1' }),
+    execCmd: (agent, slashCmd, arg) => ({ ssh: true, agent, command: `openclaw ${slashCmd.slice(1)}${arg ? ' ' + arg : ''} 2>&1` }),
+    parseHelp: parseCLIHelp,
   },
   'openclaw-local': {
-    '/help': { desc: 'Show available commands', cmd: (agent) => ({ local: true, command: 'openclaw --help 2>&1' }) },
-    '/agents': { desc: 'List available agents', cmd: (agent) => ({ local: true, command: 'openclaw agent list --json 2>&1 || openclaw agent list 2>&1' }) },
-    '/status': { desc: 'Check agent status', cmd: (agent) => ({ local: true, command: 'openclaw status --json 2>&1 || openclaw status 2>&1' }) },
-    '/clear': { desc: 'Clear chat history', local: true },
+    discoverCmd: (agent) => ({ local: true, command: 'openclaw --help 2>&1', cwd: agent.workDir }),
+    execCmd: (agent, slashCmd, arg) => ({ local: true, command: `openclaw ${slashCmd.slice(1)}${arg ? ' ' + arg : ''} 2>&1`, cwd: agent.workDir }),
+    parseHelp: parseCLIHelp,
   },
   'hermes': {
-    '/help': { desc: 'Show available commands', cmd: (agent) => ({ ssh: true, command: 'hermes --help 2>&1' }) },
-    '/tools': { desc: 'List available tools', cmd: (agent) => ({ ssh: true, command: 'hermes tools list 2>&1 || hermes tools 2>&1' }) },
-    '/status': { desc: 'Check connection status', local: true },
-    '/clear': { desc: 'Clear chat history', local: true },
+    discoverCmd: (agent) => ({ ssh: true, agent, command: 'hermes --help 2>&1' }),
+    execCmd: (agent, slashCmd, arg) => ({ ssh: true, agent, command: `hermes ${slashCmd.slice(1)}${arg ? ' ' + arg : ''} 2>&1` }),
+    parseHelp: parseCLIHelp,
   },
   'hermes-local': {
-    '/help': { desc: 'Show available commands', cmd: (agent) => ({ local: true, command: 'hermes --help 2>&1' }) },
-    '/tools': { desc: 'List available tools', cmd: (agent) => ({ local: true, command: 'hermes tools list 2>&1 || hermes tools 2>&1' }) },
-    '/status': { desc: 'Check connection status', local: true },
-    '/clear': { desc: 'Clear chat history', local: true },
+    discoverCmd: (agent) => ({ local: true, command: 'hermes --help 2>&1', cwd: agent.workDir }),
+    execCmd: (agent, slashCmd, arg) => ({ local: true, command: `hermes ${slashCmd.slice(1)}${arg ? ' ' + arg : ''} 2>&1`, cwd: agent.workDir }),
+    parseHelp: parseCLIHelp,
   },
   'openai-compat': {
-    '/models': { desc: 'List available models', cmd: (agent) => ({ http: true, url: `${agent.baseUrl}/v1/models`, apiKey: agent.apiKey }) },
-    '/status': { desc: 'Check connection status', local: true },
-    '/clear': { desc: 'Clear chat history', local: true },
+    // OpenAI-compat has no CLI, provide a static /models command via special handling
+    discoverCmd: null,
+    execCmd: (agent, slashCmd, arg) => {
+      if (slashCmd === '/models') return { http: true, url: `${agent.baseUrl}/v1/models`, apiKey: agent.apiKey };
+      return null;
+    },
+    staticCmds: [{ name: '/models', desc: 'List available models' }],
+    parseHelp: () => [],
   },
   'codex': {
-    '/help': { desc: 'Show available commands', cmd: (agent) => ({ local: true, command: `${agent.codexPath || 'codex'} --help 2>&1` }) },
-    '/clear': { desc: 'Clear chat history', local: true },
-    '/status': { desc: 'Check connection status', local: true },
+    discoverCmd: (agent) => ({ local: true, command: `${agent.codexPath || 'codex'} --help 2>&1`, cwd: agent.workDir }),
+    execCmd: (agent, slashCmd, arg) => ({ local: true, command: `${agent.codexPath || 'codex'} ${slashCmd.slice(1)}${arg ? ' ' + arg : ''} 2>&1`, cwd: agent.workDir }),
+    parseHelp: parseCLIHelp,
   },
   'codex-ssh': {
-    '/help': { desc: 'Show available commands', cmd: (agent) => ({ ssh: true, command: 'codex --help 2>&1' }) },
-    '/clear': { desc: 'Clear chat history', local: true },
-    '/status': { desc: 'Check connection status', local: true },
+    discoverCmd: (agent) => ({ ssh: true, agent, command: 'codex --help 2>&1' }),
+    execCmd: (agent, slashCmd, arg) => ({ ssh: true, agent, command: `codex ${slashCmd.slice(1)}${arg ? ' ' + arg : ''} 2>&1` }),
+    parseHelp: parseCLIHelp,
   },
 };
 
+// Generic CLI help parser: extracts subcommands/options from --help output
+// Handles common formats:
+//   command    Description text
+//   command  - Description text
+//   command — Description text
+//   --flag     Description text
+function parseCLIHelp(output) {
+  const cmds = [];
+  const lines = output.split('\n');
+  const seen = new Set();
+  for (const line of lines) {
+    // Match "  subcommand   description" patterns (indented, at least 2 spaces between name and desc)
+    const match = line.match(/^\s{1,8}([\w][\w-]*)\s{2,}[-–—:]?\s*(.+)/);
+    if (match) {
+      const name = '/' + match[1].toLowerCase();
+      if (!LOCAL_COMMANDS[name] && !seen.has(name)) {
+        seen.add(name);
+        cmds.push({ name, desc: match[2].trim() });
+      }
+    }
+  }
+  // If we got nothing useful, add a /help fallback
+  if (cmds.length === 0) {
+    cmds.push({ name: '/help', desc: 'Show help output' });
+  }
+  return cmds;
+}
+
+// Cache discovered commands: key = provider + agent-id, value = { commands, timestamp }
+const discoveredCommandsCache = new Map();
+const DISCOVERY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+async function discoverCommands(agent) {
+  const provider = agent.provider;
+  const config = PROVIDER_CONFIG[provider];
+  if (!config) return [];
+
+  const cacheKey = `${provider}:${agent.id || 'default'}`;
+  const cached = discoveredCommandsCache.get(cacheKey);
+  if (cached && (Date.now() - cached.timestamp) < DISCOVERY_CACHE_TTL) {
+    return cached.commands;
+  }
+
+  // Start with local commands
+  let commands = Object.entries(LOCAL_COMMANDS).map(([name, info]) => ({ name, desc: info.desc }));
+
+  // Add static commands if any
+  if (config.staticCmds) {
+    commands = commands.concat(config.staticCmds);
+  }
+
+  // Discover dynamic commands from the CLI
+  if (config.discoverCmd) {
+    try {
+      const spec = config.discoverCmd(agent);
+      let output = '';
+
+      if (spec.cli) {
+        output = await runLocalCommand(spec.cli, spec.args, { cwd: spec.cwd || process.env.HOME, timeout: 15000 });
+      } else if (spec.ssh) {
+        output = await runSSHCommand(spec.agent || agent, spec.command, 15000);
+      } else if (spec.local) {
+        output = await runLocalCommand('bash', ['-l', '-c', spec.command], { cwd: spec.cwd || agent.workDir || process.env.HOME, timeout: 15000 });
+      }
+
+      if (output) {
+        const parsed = config.parseHelp(output);
+        // Merge discovered commands (don't duplicate locals)
+        const existingNames = new Set(commands.map(c => c.name));
+        for (const cmd of parsed) {
+          if (!existingNames.has(cmd.name)) {
+            commands.push(cmd);
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`Command discovery failed for ${provider}:`, err.message);
+      // Fall through with just local commands
+    }
+  }
+
+  discoveredCommandsCache.set(cacheKey, { commands, timestamp: Date.now() });
+  return commands;
+}
+
 ipcMain.handle('agent:slash-commands', async (_event, provider) => {
-  const cmds = SLASH_COMMANDS[provider] || {};
-  return Object.entries(cmds).map(([name, info]) => ({ name, desc: info.desc }));
+  // Lightweight version: return cached or local-only commands
+  const cacheKey = `${provider}:default`;
+  const cached = discoveredCommandsCache.get(cacheKey);
+  if (cached && (Date.now() - cached.timestamp) < DISCOVERY_CACHE_TTL) {
+    return cached.commands;
+  }
+  const config = PROVIDER_CONFIG[provider] || {};
+  const commands = Object.entries(LOCAL_COMMANDS).map(([name, info]) => ({ name, desc: info.desc }));
+  if (config.staticCmds) commands.push(...config.staticCmds);
+  return commands;
+});
+
+// Full discovery: pass the agent object to discover commands from the CLI
+ipcMain.handle('agent:discover-slash-commands', async (_event, agent) => {
+  const commands = await discoverCommands(agent);
+  // Also cache under the default key so getSlashCommands returns them
+  const defaultKey = `${agent.provider}:default`;
+  discoveredCommandsCache.set(defaultKey, { commands, timestamp: Date.now() });
+  return commands;
 });
 
 ipcMain.handle('agent:exec-slash', async (_event, agent, command) => {
@@ -1084,41 +1203,47 @@ ipcMain.handle('agent:exec-slash', async (_event, agent, command) => {
   const slashCmd = parts[0].toLowerCase();
   const arg = parts.slice(1).join(' ');
   const provider = agent.provider;
-  const cmds = SLASH_COMMANDS[provider] || {};
-  const cmdDef = cmds[slashCmd];
-
-  if (!cmdDef) {
-    return { error: `Unknown command: ${slashCmd}. Type / to see available commands.` };
-  }
 
   // Local-only commands (clear, status) are handled in the renderer
-  if (cmdDef.local) {
+  if (LOCAL_COMMANDS[slashCmd]) {
     return { local: true, command: slashCmd };
   }
 
-  try {
-    const spec = cmdDef.cmd(agent, arg);
+  const config = PROVIDER_CONFIG[provider];
+  if (!config) {
+    return { error: `Unknown provider: ${provider}` };
+  }
 
-    // Direct result (like setting a field)
-    if (spec.result) {
-      return { content: spec.result, setField: spec.setField };
+  // If this is /help, also trigger a fresh discovery for the command palette
+  if (slashCmd === '/help' && config.discoverCmd) {
+    // Invalidate cache so next palette open gets fresh commands
+    discoveredCommandsCache.delete(`${provider}:${agent.id || 'default'}`);
+    discoveredCommandsCache.delete(`${provider}:default`);
+  }
+
+  try {
+    const spec = config.execCmd(agent, slashCmd, arg);
+    if (!spec) {
+      return { error: `Unknown command: ${slashCmd}. Type / to see available commands.` };
     }
 
     // SSH command
     if (spec.ssh) {
-      const output = await runSSHCommand(agent, spec.command, 30000);
+      const output = await runSSHCommand(spec.agent || agent, spec.command, 30000);
       return { content: output.trim() };
     }
 
     // Local shell command
     if (spec.local) {
-      const output = await runLocalCommand('bash', ['-l', '-c', spec.command], { cwd: agent.workDir || process.env.HOME, timeout: 30000 });
+      const output = await runLocalCommand('bash', ['-l', '-c', spec.command], { cwd: spec.cwd || agent.workDir || process.env.HOME, timeout: 30000 });
       return { content: output.trim() };
     }
 
     // CLI command (claude code)
     if (spec.cli) {
       const output = await runLocalCommand(spec.cli, spec.args, { cwd: spec.cwd || process.env.HOME, timeout: 30000 });
+      // Trigger discovery after running a command (to pick up new commands from help)
+      discoverCommands(agent).catch(() => {});
       return { content: extractClaudeCodeResponse(output) };
     }
 
