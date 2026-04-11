@@ -585,15 +585,19 @@
 
     // ── Auth Login Button (in-app, no terminal) ──
     function AuthLoginButton({ agent, onSuccess }) {
-      const [authState, setAuthState] = useState('idle'); // idle | logging-in | browser-opened | success | error
+      const [authState, setAuthState] = useState('idle'); // idle | logging-in | waiting-for-code | success | error
       const [authMsg, setAuthMsg] = useState('');
+      const [codeInput, setCodeInput] = useState('');
+      const [submitting, setSubmitting] = useState(false);
+      const codeRef = useRef(null);
 
       useEffect(() => {
         const handleStatus = (agentId, status) => {
           if (agentId !== agent.id) return;
-          if (status === 'browser-opened') {
-            setAuthState('browser-opened');
-            setAuthMsg('Complete login in your browser...');
+          if (status === 'waiting-for-code') {
+            setAuthState('waiting-for-code');
+            setAuthMsg('Browser opened — paste the code you see after logging in.');
+            setTimeout(() => codeRef.current?.focus(), 100);
           } else if (status === 'authenticated') {
             setAuthState('success');
             setAuthMsg('Authenticated!');
@@ -607,8 +611,9 @@
       const handleLogin = async () => {
         setAuthState('logging-in');
         setAuthMsg('Starting login...');
+        setCodeInput('');
         const res = await window.agentHub.authLogin(agent);
-        if (res.ok) {
+        if (res.ok && !res.pending) {
           setAuthState('success');
           setAuthMsg(res.message || 'Authenticated!');
           if (onSuccess) onSuccess();
@@ -616,14 +621,27 @@
           setAuthState('error');
           setAuthMsg(res.error);
         }
+        // If res.pending, the auth-status listener will update the state
       };
 
-      const stateStyles = {
-        idle: {},
-        'logging-in': { opacity: 0.7 },
-        'browser-opened': { background: 'var(--orange)', color: '#000' },
-        success: { background: 'var(--green)', color: '#000' },
-        error: { background: 'var(--red)' },
+      const handleSubmitCode = async () => {
+        if (!codeInput.trim()) return;
+        setSubmitting(true);
+        const res = await window.agentHub.authSendInput(agent.id, codeInput.trim());
+        setSubmitting(false);
+        if (res.error) {
+          setAuthState('error');
+          setAuthMsg(res.error);
+        } else {
+          setAuthMsg('Code submitted — waiting for confirmation...');
+        }
+      };
+
+      const handleCodeKeyDown = (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          handleSubmitCode();
+        }
       };
 
       return (
@@ -634,18 +652,50 @@
             </button>
           )}
           {authState === 'logging-in' && (
-            <button className="btn btn-primary" disabled style={stateStyles['logging-in']}>
+            <button className="btn btn-primary" disabled style={{ opacity: 0.7 }}>
               Logging in...
             </button>
           )}
-          {authState === 'browser-opened' && (
-            <div style={{ fontSize: 13, color: 'var(--orange)', marginTop: 4 }}>
-              ⏳ {authMsg}
+          {authState === 'waiting-for-code' && (
+            <div>
+              <div style={{ fontSize: 13, color: 'var(--orange)', marginBottom: 8 }}>
+                {authMsg}
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input
+                  ref={codeRef}
+                  type="text"
+                  value={codeInput}
+                  onChange={(e) => setCodeInput(e.target.value)}
+                  onKeyDown={handleCodeKeyDown}
+                  placeholder="Paste code here"
+                  style={{
+                    background: 'var(--bg-2)',
+                    border: '1px solid var(--border-light)',
+                    borderRadius: 'var(--radius-sm)',
+                    padding: '6px 10px',
+                    color: 'var(--text-0)',
+                    fontFamily: 'JetBrains Mono, monospace',
+                    fontSize: 14,
+                    width: 220,
+                    letterSpacing: '2px',
+                  }}
+                  disabled={submitting}
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={handleSubmitCode}
+                  disabled={submitting || !codeInput.trim()}
+                  style={{ opacity: submitting ? 0.7 : 1 }}
+                >
+                  {submitting ? 'Submitting...' : 'Submit'}
+                </button>
+              </div>
             </div>
           )}
           {authState === 'success' && (
             <div style={{ fontSize: 13, color: 'var(--green)', marginTop: 4 }}>
-              ✓ {authMsg}
+              {authMsg}
             </div>
           )}
           {authState === 'error' && (

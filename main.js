@@ -577,28 +577,48 @@ ipcMain.handle('agent:auth-login', async (_event, agent) => {
     if (agent.provider === 'claude-code') {
       const claudePath = agent.claudePath || 'claude';
 
+      // Kill any existing auth process for this agent
+      if (authProcesses[agent.id]) {
+        try { authProcesses[agent.id].kill(); } catch {}
+        delete authProcesses[agent.id];
+      }
+
       return new Promise((resolve) => {
         const proc = spawn(claudePath, ['auth', 'login'], {
           env: getLoginEnv(),
           cwd: agent.workDir || process.env.HOME,
           shell: true,
+          stdio: ['pipe', 'pipe', 'pipe'],
         });
 
         let output = '';
         let urlOpened = false;
+        let resolved = false;
 
         const handleData = (chunk) => {
           const text = chunk.toString();
           output += text;
 
-          // Claude auth login prints an OAuth URL — grab it and open in the default browser
+          // Forward all output to the renderer so the UI can display prompts
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('agent:auth-output', agent.id, text);
+          }
+
+          // Grab the OAuth URL and open it in the default browser
           const urlMatch = text.match(/(https?:\/\/[^\s]+)/);
           if (urlMatch && !urlOpened) {
             urlOpened = true;
             shell.openExternal(urlMatch[1]);
-            // Let the renderer know we opened the browser
             if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('agent:auth-status', agent.id, 'browser-opened');
+              mainWindow.webContents.send('agent:auth-status', agent.id, 'waiting-for-code');
+            }
+          }
+
+          // Detect success messages in the output stream
+          const lower = text.toLowerCase();
+          if (lower.includes('success') || lower.includes('logged in') || lower.includes('authenticated')) {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('agent:auth-status', agent.id, 'authenticated');
             }
           }
         };
@@ -608,20 +628,22 @@ ipcMain.handle('agent:auth-login', async (_event, agent) => {
 
         const timer = setTimeout(() => {
           proc.kill();
-          resolve({ error: 'Auth timed out after 2 minutes. Please try again.' });
-        }, 120000);
+          delete authProcesses[agent.id];
+          if (!resolved) { resolved = true; resolve({ error: 'Auth timed out after 3 minutes. Please try again.' }); }
+        }, 180000);
 
         proc.on('close', (code) => {
           clearTimeout(timer);
           delete authProcesses[agent.id];
-          if (code === 0 || output.toLowerCase().includes('success') || output.toLowerCase().includes('logged in')) {
+          if (resolved) return;
+          resolved = true;
+
+          const lower = output.toLowerCase();
+          if (code === 0 || lower.includes('success') || lower.includes('logged in') || lower.includes('authenticated')) {
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send('agent:auth-status', agent.id, 'authenticated');
             }
             resolve({ ok: true, message: 'Successfully authenticated!' });
-          } else if (urlOpened) {
-            // Process ended but we opened a URL — auth might have completed in browser
-            resolve({ ok: true, message: 'Auth flow completed. Try sending a message to verify.' });
           } else {
             resolve({ error: output.trim() || `Auth exited with code ${code}` });
           }
@@ -630,10 +652,21 @@ ipcMain.handle('agent:auth-login', async (_event, agent) => {
         proc.on('error', (err) => {
           clearTimeout(timer);
           delete authProcesses[agent.id];
-          resolve({ error: err.message });
+          if (!resolved) { resolved = true; resolve({ error: err.message }); }
         });
 
         authProcesses[agent.id] = proc;
+
+        // Don't resolve yet — the process stays alive waiting for the user
+        // to complete the browser flow and/or enter a code. It resolves on close.
+        // But we do return a "started" ack immediately so the UI can update.
+        // We use a slight delay to let the process print its first output.
+        setTimeout(() => {
+          if (!resolved) {
+            resolved = true;
+            resolve({ ok: true, pending: true, message: 'Auth started. Complete login in your browser.' });
+          }
+        }, 3000);
       });
 
     } else if (agent.provider === 'openclaw-local') {
@@ -665,6 +698,20 @@ ipcMain.handle('agent:auth-status', async (_event, agent) => {
     return { authenticated: false, detail: 'Unknown provider' };
   } catch (err) {
     return { authenticated: false, detail: err.message };
+  }
+});
+
+// Write a code (or any input) to the running auth process's stdin
+ipcMain.handle('agent:auth-send-input', async (_event, agentId, input) => {
+  const proc = authProcesses[agentId];
+  if (!proc || proc.killed) {
+    return { error: 'No auth process running. Click Login to start again.' };
+  }
+  try {
+    proc.stdin.write(input + '\n');
+    return { ok: true };
+  } catch (err) {
+    return { error: err.message };
   }
 });
 

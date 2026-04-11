@@ -27,9 +27,12 @@ contextBridge.exposeInMainWorld('agentHub', {
   // Auth (in-app, no terminal needed)
   authLogin: (agent) => ipcRenderer.invoke('agent:auth-login', agent),
   authStatus: (agent) => ipcRenderer.invoke('agent:auth-status', agent),
+  authSendInput: (agentId, input) => ipcRenderer.invoke('agent:auth-send-input', agentId, input),
   onAuthStatus: (cb) => ipcRenderer.on('agent:auth-status', (_e, agentId, status) => cb(agentId, status)),
+  onAuthOutput: (cb) => ipcRenderer.on('agent:auth-output', (_e, agentId, text) => cb(agentId, text)),
   removeAuthListeners: () => {
     ipcRenderer.removeAllListeners('agent:auth-status');
+    ipcRenderer.removeAllListeners('agent:auth-output');
   },
 
   // Legacy (kept for compat, redirects to in-app auth)
