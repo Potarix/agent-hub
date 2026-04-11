@@ -385,7 +385,6 @@ function runLocalCommand(command, args, options = {}) {
     const proc = spawn(command, args, {
       env: { ...getLoginEnv(), ...(options.env || {}) },
       cwd: options.cwd || process.env.HOME,
-      shell: true,
     });
 
     let stdout = '';
@@ -583,91 +582,85 @@ ipcMain.handle('agent:auth-login', async (_event, agent) => {
         delete authProcesses[agent.id];
       }
 
-      return new Promise((resolve) => {
-        const proc = spawn(claudePath, ['auth', 'login'], {
-          env: getLoginEnv(),
-          cwd: agent.workDir || process.env.HOME,
-          shell: true,
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
+      // We resolve the IPC immediately so the renderer isn't blocked.
+      // All real progress is communicated through agent:auth-status events.
+      const proc = spawn(claudePath, ['auth', 'login'], {
+        env: getLoginEnv(),
+        cwd: agent.workDir || process.env.HOME,
+        shell: true,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
 
-        let output = '';
-        let urlOpened = false;
-        let resolved = false;
+      let output = '';
+      let urlOpened = false;
 
-        const handleData = (chunk) => {
-          const text = chunk.toString();
-          output += text;
+      const sendStatus = (status) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('agent:auth-status', agent.id, status);
+        }
+      };
 
-          // Forward all output to the renderer so the UI can display prompts
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('agent:auth-output', agent.id, text);
-          }
+      const handleData = (chunk) => {
+        const text = chunk.toString();
+        output += text;
 
-          // Grab the OAuth URL and open it in the default browser
-          const urlMatch = text.match(/(https?:\/\/[^\s]+)/);
-          if (urlMatch && !urlOpened) {
+        // Forward raw output to the renderer
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('agent:auth-output', agent.id, text);
+        }
+
+        // Open the OAuth URL in the browser — only once
+        if (!urlOpened) {
+          const urlMatch = output.match(/(https?:\/\/[^\s]+)/);
+          if (urlMatch) {
             urlOpened = true;
             shell.openExternal(urlMatch[1]);
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('agent:auth-status', agent.id, 'waiting-for-code');
-            }
+            sendStatus('waiting-for-code');
           }
+        }
 
-          // Detect success messages in the output stream
-          const lower = text.toLowerCase();
-          if (lower.includes('success') || lower.includes('logged in') || lower.includes('authenticated')) {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('agent:auth-status', agent.id, 'authenticated');
-            }
+        // Detect success in the stream
+        const lower = text.toLowerCase();
+        if (lower.includes('success') || lower.includes('logged in') || lower.includes('authenticated')) {
+          sendStatus('authenticated');
+        }
+      };
+
+      proc.stdout.on('data', handleData);
+      proc.stderr.on('data', handleData);
+
+      const timer = setTimeout(() => {
+        proc.kill();
+        delete authProcesses[agent.id];
+        sendStatus('error');
+      }, 180000);
+
+      proc.on('close', (code) => {
+        clearTimeout(timer);
+        delete authProcesses[agent.id];
+
+        const lower = output.toLowerCase();
+        if (code === 0 || lower.includes('success') || lower.includes('logged in') || lower.includes('authenticated')) {
+          sendStatus('authenticated');
+        } else {
+          // Process exited without clear success — send error so UI can recover
+          sendStatus('error');
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('agent:auth-output', agent.id, output.trim() || `Auth exited with code ${code}`);
           }
-        };
-
-        proc.stdout.on('data', handleData);
-        proc.stderr.on('data', handleData);
-
-        const timer = setTimeout(() => {
-          proc.kill();
-          delete authProcesses[agent.id];
-          if (!resolved) { resolved = true; resolve({ error: 'Auth timed out after 3 minutes. Please try again.' }); }
-        }, 180000);
-
-        proc.on('close', (code) => {
-          clearTimeout(timer);
-          delete authProcesses[agent.id];
-          if (resolved) return;
-          resolved = true;
-
-          const lower = output.toLowerCase();
-          if (code === 0 || lower.includes('success') || lower.includes('logged in') || lower.includes('authenticated')) {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('agent:auth-status', agent.id, 'authenticated');
-            }
-            resolve({ ok: true, message: 'Successfully authenticated!' });
-          } else {
-            resolve({ error: output.trim() || `Auth exited with code ${code}` });
-          }
-        });
-
-        proc.on('error', (err) => {
-          clearTimeout(timer);
-          delete authProcesses[agent.id];
-          if (!resolved) { resolved = true; resolve({ error: err.message }); }
-        });
-
-        authProcesses[agent.id] = proc;
-
-        // Don't resolve yet — the process stays alive waiting for the user
-        // to complete the browser flow and/or enter a code. It resolves on close.
-        // But we do return a "started" ack immediately so the UI can update.
-        // We use a slight delay to let the process print its first output.
-        setTimeout(() => {
-          if (!resolved) {
-            resolved = true;
-            resolve({ ok: true, pending: true, message: 'Auth started. Complete login in your browser.' });
-          }
-        }, 3000);
+        }
       });
+
+      proc.on('error', (err) => {
+        clearTimeout(timer);
+        delete authProcesses[agent.id];
+        sendStatus('error');
+      });
+
+      authProcesses[agent.id] = proc;
+
+      // Return immediately — the renderer listens for auth-status events
+      return { ok: true, pending: true, message: 'Auth started.' };
 
     } else if (agent.provider === 'openclaw-local') {
       const output = await runLocalCommand('bash', ['-l', '-c', 'openclaw setup 2>&1'], { timeout: 60000 });
