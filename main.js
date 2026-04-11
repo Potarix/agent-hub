@@ -770,22 +770,46 @@ async function chatCodexLocal(agent, messages) {
   const workDir = agent.workDir || process.env.HOME;
   const escapedMsg = lastUserMsg.content;
 
-  const args = [escapedMsg];
+  // Use --experimental-json to get JSONL output (no TTY required) and
+  // --full-auto so Codex doesn't block waiting for interactive approval.
+  const args = [escapedMsg, '--experimental-json', '--full-auto'];
   if (agent.model) args.push('--model', agent.model);
   if (agent.codexArgs) {
     args.push(...agent.codexArgs.split(/\s+/).filter(Boolean));
   }
 
   try {
-    // Codex requires a TTY on stdin. Wrap with `script` to allocate a
-    // pseudo-terminal so the binary doesn't bail with "stdin is not a terminal".
-    const codexCmd = [codexPath, ...args].map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' ');
-    const output = await runLocalCommand('script', ['-q', '/dev/null', '/bin/sh', '-c', codexCmd], {
+    const output = await runLocalCommand(codexPath, args, {
       cwd: workDir,
       timeout: agent.timeout || 300000,
     });
-    const content = extractCodexResponse(output);
-    return { content };
+
+    // Parse JSONL output — collect text content and thinking/reasoning
+    let content = '';
+    let thinking = null;
+    const lines = output.split('\n').filter(l => l.trim());
+    for (const line of lines) {
+      try {
+        const evt = JSON.parse(line);
+        // Collect assistant text output
+        if (evt.type === 'message' && evt.message?.content) {
+          for (const block of (Array.isArray(evt.message.content) ? evt.message.content : [])) {
+            if (block.type === 'output_text' || block.type === 'text') {
+              content += (block.text || '');
+            } else if (block.type === 'reasoning' || block.type === 'thinking') {
+              thinking = (thinking || '') + (block.text || block.thinking || '');
+            }
+          }
+        }
+        // Also handle top-level text events
+        if (evt.type === 'text' || evt.type === 'output_text') {
+          content += (evt.text || '');
+        }
+      } catch { /* skip non-JSON lines */ }
+    }
+
+    if (!content) content = extractCodexResponse(output);
+    return { content, thinking };
   } catch (err) {
     const msg = err.message || '';
     if (msg.includes('401') || msg.includes('authentication') || msg.includes('API key')) {
@@ -798,7 +822,7 @@ async function chatCodexLocal(agent, messages) {
 async function pingCodexLocal(agent) {
   try {
     const codexPath = agent.codexPath || 'codex';
-    const output = await runLocalCommand('script', ['-q', '/dev/null', codexPath, '--version'], { timeout: 10000 });
+    const output = await runLocalCommand(codexPath, ['--version'], { timeout: 10000 });
     return { online: true, info: output.trim() };
   } catch (err) {
     return { online: false, error: err.message };
