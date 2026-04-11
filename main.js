@@ -454,6 +454,12 @@ async function chatClaudeCode(agent, messages) {
   const args = ['-p', escapedMsg, '--output-format', useStreamJson ? 'stream-json' : 'json'];
   if (useStreamJson) args.push('--verbose');
   if (agent.model) args.push('--model', agent.model);
+
+  // Default to acceptEdits so Claude can edit files without an interactive terminal.
+  // Users can override via agent.permissionMode or agent.claudeArgs.
+  const permMode = agent.permissionMode || 'acceptEdits';
+  args.push('--permission-mode', permMode);
+
   if (agent.claudeArgs) {
     // Allow custom args like --allowedTools, --permission-mode, etc.
     args.push(...agent.claudeArgs.split(/\s+/).filter(Boolean));
