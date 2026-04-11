@@ -449,10 +449,8 @@ async function chatClaudeCode(agent, messages) {
   const workDir = agent.workDir || process.env.HOME;
   const escapedMsg = lastUserMsg.content;
 
-  // Use stream-json + verbose when showThinking is on, so we can capture thinking blocks
-  const useStreamJson = !!agent.showThinking;
-  const args = ['-p', escapedMsg, '--output-format', useStreamJson ? 'stream-json' : 'json'];
-  if (useStreamJson) args.push('--verbose');
+  // Always use stream-json + verbose so we can capture thinking blocks
+  const args = ['-p', escapedMsg, '--output-format', 'stream-json', '--verbose'];
   if (agent.model) args.push('--model', agent.model);
 
   // Default to acceptEdits so Claude can edit files without an interactive terminal.
@@ -480,36 +478,25 @@ async function chatClaudeCode(agent, messages) {
 
     let content, sessionId, thinking = null;
 
-    if (useStreamJson) {
-      // Parse stream-json: multiple JSON lines — extract thinking, result, and session_id
-      const lines = output.split('\n').filter(l => l.trim());
-      for (const line of lines) {
-        try {
-          const evt = JSON.parse(line);
-          if (evt.type === 'assistant' && evt.message?.content) {
-            for (const block of evt.message.content) {
-              if (block.type === 'thinking' && block.thinking) {
-                thinking = (thinking || '') + block.thinking;
-              }
+    // Parse stream-json: multiple JSON lines — extract thinking, result, and session_id
+    const lines = output.split('\n').filter(l => l.trim());
+    for (const line of lines) {
+      try {
+        const evt = JSON.parse(line);
+        if (evt.type === 'assistant' && evt.message?.content) {
+          for (const block of evt.message.content) {
+            if (block.type === 'thinking' && block.thinking) {
+              thinking = (thinking || '') + block.thinking;
             }
           }
-          if (evt.type === 'result') {
-            content = evt.result || '';
-            sessionId = evt.session_id || null;
-          }
-        } catch { /* skip non-JSON lines */ }
-      }
-      if (!content) content = extractClaudeCodeResponse(output);
-    } else {
-      // Parse single JSON result
-      try {
-        const data = JSON.parse(output);
-        content = data.result || data.content || data.text || output.trim();
-        sessionId = data.session_id || null;
-      } catch {
-        content = extractClaudeCodeResponse(output);
-      }
+        }
+        if (evt.type === 'result') {
+          content = evt.result || '';
+          sessionId = evt.session_id || null;
+        }
+      } catch { /* skip non-JSON lines */ }
     }
+    if (!content) content = extractClaudeCodeResponse(output);
 
     if (content.includes('401') || content.includes('authentication_error') || content.includes('Failed to authenticate')) {
       return { error: 'Claude Code is not authenticated. Click Login below to sign in.' };
@@ -790,7 +777,10 @@ async function chatCodexLocal(agent, messages) {
   }
 
   try {
-    const output = await runLocalCommand(codexPath, args, {
+    // Codex requires a TTY on stdin. Wrap with `script` to allocate a
+    // pseudo-terminal so the binary doesn't bail with "stdin is not a terminal".
+    const codexCmd = [codexPath, ...args].map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' ');
+    const output = await runLocalCommand('script', ['-q', '/dev/null', '/bin/sh', '-c', codexCmd], {
       cwd: workDir,
       timeout: agent.timeout || 300000,
     });
@@ -808,7 +798,7 @@ async function chatCodexLocal(agent, messages) {
 async function pingCodexLocal(agent) {
   try {
     const codexPath = agent.codexPath || 'codex';
-    const output = await runLocalCommand(codexPath, ['--version'], { timeout: 10000 });
+    const output = await runLocalCommand('script', ['-q', '/dev/null', codexPath, '--version'], { timeout: 10000 });
     return { online: true, info: output.trim() };
   } catch (err) {
     return { online: false, error: err.message };

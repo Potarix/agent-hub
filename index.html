@@ -329,6 +329,22 @@
     }
     .chat-header .agent-name { font-size: 15px; font-weight: 600; letter-spacing: -0.2px; }
 
+    .btn-thinking-toggle {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-2);
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.15s;
+    }
+    .btn-thinking-toggle:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-thinking-toggle.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
     .chat-messages {
       flex: 1;
       overflow-y: auto;
@@ -1155,7 +1171,7 @@
 
     // ── Chat View ──
     function ThinkingBlock({ thinking }) {
-      const [open, setOpen] = useState(false);
+      const [open, setOpen] = useState(true);
       if (!thinking) return null;
       return (
         <div className="thinking-block">
@@ -1177,6 +1193,7 @@
       const [slashCommands, setSlashCommands] = useState([]);
       const [showSlash, setShowSlash] = useState(false);
       const [slashIdx, setSlashIdx] = useState(0);
+      const [showThinking, setShowThinking] = useState(true);
       const bottomRef = useRef(null);
       const inputRef = useRef(null);
 
@@ -1256,24 +1273,29 @@
         }
       };
 
+      const pendingCountRef = useRef(0);
+
       const sendMessage = async () => {
         const text = input.trim();
-        if (!text || loadingRef.current) return;
+        if (!text) return;
 
-        // If it's a slash command, route it
+        // If it's a slash command, route it (still sequential)
         if (text.startsWith('/')) {
+          if (loadingRef.current) return;
           await executeSlashCommand(text);
           return;
         }
-
-        loadingRef.current = true;
-        setLoading(true);
 
         const userMsg = { role: 'user', content: text };
         setMessages(prev => [...prev, userMsg]);
         setInput('');
         if (inputRef.current) inputRef.current.style.height = 'auto';
 
+        pendingCountRef.current += 1;
+        loadingRef.current = true;
+        setLoading(true);
+
+        // Build API messages from current state + new user message
         const apiMessages = [];
         if (agent.systemPrompt) apiMessages.push({ role: 'system', content: agent.systemPrompt });
         const allMsgs = [...(messages || []), userMsg];
@@ -1295,8 +1317,12 @@
         } catch (err) {
           setMessages(prev => [...prev, { role: 'error', content: err.message || 'Something went wrong' }]);
         } finally {
-          loadingRef.current = false;
-          setLoading(false);
+          pendingCountRef.current -= 1;
+          if (pendingCountRef.current <= 0) {
+            pendingCountRef.current = 0;
+            loadingRef.current = false;
+            setLoading(false);
+          }
         }
       };
 
@@ -1349,6 +1375,14 @@
                 {status === 'online' ? 'Connected' : status === 'checking' ? 'Checking...' : 'Disconnected'}
               </div>
             </div>
+            <button
+              className={`btn-thinking-toggle ${showThinking ? 'active' : ''}`}
+              onClick={() => setShowThinking(t => !t)}
+              title={showThinking ? 'Hide thinking' : 'Show thinking'}
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1.5a4.5 4.5 0 0 0-3.2 7.6c.5.5.7 1.1.7 1.9v.5h5v-.5c0-.8.3-1.4.7-1.9A4.5 4.5 0 0 0 8 1.5zM6 13h4v.5a2 2 0 0 1-4 0V13z" fill="currentColor"/></svg>
+              <span style={{ fontSize: 11 }}>Thinking</span>
+            </button>
           </div>
 
           <div className="chat-messages">
@@ -1367,7 +1401,7 @@
             )}
             {messages.map((msg, i) => (
               <div key={i} className={`msg ${msg.role}`}>
-                {msg.thinking && (
+                {showThinking && msg.thinking && (
                   <ThinkingBlock thinking={msg.thinking} />
                 )}
                 {msg.content}
@@ -1420,7 +1454,7 @@
                 }}
                 onKeyDown={onKeyDown}
               />
-              <button className="btn-send" onClick={sendMessage} disabled={loading || !input.trim()}>
+              <button className="btn-send" onClick={sendMessage} disabled={!input.trim()}>
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3l5 5h-3.5v5h-3V8H3l5-5z" fill="currentColor"/></svg>
               </button>
             </div>
@@ -1437,7 +1471,6 @@
       { name: 'Hermes (Local)', emoji: 'H', provider: 'hermes-local', model: '', providerClass: 'provider-hermes', desc: 'Local Hermes Agent instance' },
       { name: 'Hermes (SSH)', emoji: 'H', provider: 'hermes', sshHost: '', sshUser: 'root', model: '', providerClass: 'provider-hermes', desc: 'Hermes on a remote VPS' },
       { name: 'Codex (Local)', emoji: 'CX', provider: 'codex', model: '', providerClass: 'provider-codex', desc: 'Local OpenAI Codex CLI agent' },
-      { name: 'Ollama (Local)', emoji: 'OL', provider: 'openai-compat', baseUrl: 'http://localhost:11434', model: 'llama3', providerClass: 'provider-generic', desc: 'Local Ollama instance' },
     ];
 
     // ── Settings Modal ──
@@ -1563,7 +1596,7 @@
                     <option value="hermes-local">Hermes (Local)</option>
                     <option value="hermes">Hermes (SSH)</option>
                     <option value="codex">Codex (Local)</option>
-                    <option value="openai-compat">OpenAI Compatible (Ollama, vLLM, etc.)</option>
+                    <option value="openai-compat">OpenAI Compatible (vLLM, etc.)</option>
                   </select>
                 </div>
 
@@ -1663,7 +1696,7 @@
                       <input value={form.model || ''} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} placeholder="Uses Hermes default" />
                     </div>
                     <div className="form-row">
-                      <label>Provider override (optional, e.g. openai, anthropic, ollama)</label>
+                      <label>Provider override (optional, e.g. openai, anthropic)</label>
                       <input value={form.hermesProvider || ''} onChange={e => setForm(f => ({ ...f, hermesProvider: e.target.value }))} placeholder="Leave blank for default" />
                     </div>
                     <div className="form-row">
@@ -1729,7 +1762,7 @@
                       <input value={form.model || ''} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} placeholder="e.g. nous-hermes-3, gpt-4, etc." />
                     </div>
                     <div className="form-row">
-                      <label>Provider override (optional, e.g. openai, anthropic, ollama)</label>
+                      <label>Provider override (optional, e.g. openai, anthropic)</label>
                       <input value={form.hermesProvider || ''} onChange={e => setForm(f => ({ ...f, hermesProvider: e.target.value }))} placeholder="Leave blank for Hermes default" />
                     </div>
                     <div className="form-row">
@@ -1743,9 +1776,9 @@
                   <>
                     <div className="form-row">
                       <label>Base URL (no trailing slash)</label>
-                      <input value={form.baseUrl || ''} onChange={e => setForm(f => ({ ...f, baseUrl: e.target.value }))} placeholder="http://localhost:11434" />
+                      <input value={form.baseUrl || ''} onChange={e => setForm(f => ({ ...f, baseUrl: e.target.value }))} placeholder="http://localhost:8000" />
                       <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 4 }}>
-                        Common ports: 11434 (Ollama), 8000 (vLLM), 8080, 3000
+                        Common ports: 8000 (vLLM), 8080, 3000
                       </div>
                     </div>
                     <div className="form-row">
