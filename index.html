@@ -1074,6 +1074,7 @@
             <div className="main-area">
               {activeAgent ? (
                 <ChatView
+                  key={activeAgent.id}
                   agent={activeAgent}
                   status={statuses[activeAgent.id]}
                   messages={chats[activeAgent.id] || []}
@@ -1200,6 +1201,9 @@
       const streamTextRef = useRef('');
       const streamThinkingRef = useRef('');
       const activeRequestIdRef = useRef(null);
+      // Keep a ref to the latest agent so stream callbacks never use a stale closure
+      const agentRef = useRef(agent);
+      agentRef.current = agent;
 
       useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -1209,24 +1213,27 @@
         inputRef.current?.focus();
       }, [agent.id]);
 
-      // Set up stream listeners
+      // Set up stream listeners — only depends on agent.id (key= already
+      // forces a full remount on agent switch, so this runs once per agent)
       useEffect(() => {
+        let cancelled = false;
+
         window.agentHub.removeStreamListeners();
 
         window.agentHub.onStreamChunk((id, text) => {
-          if (id !== activeRequestIdRef.current) return;
+          if (cancelled || id !== activeRequestIdRef.current) return;
           streamTextRef.current += text;
           setStreamText(streamTextRef.current);
         });
 
         window.agentHub.onStreamThinking((id, text) => {
-          if (id !== activeRequestIdRef.current) return;
+          if (cancelled || id !== activeRequestIdRef.current) return;
           streamThinkingRef.current += text;
           setStreamThinking(streamThinkingRef.current);
         });
 
         window.agentHub.onStreamDone((id, meta) => {
-          if (id !== activeRequestIdRef.current) return;
+          if (cancelled || id !== activeRequestIdRef.current) return;
           const content = streamTextRef.current;
           const thinking = streamThinkingRef.current || null;
           if (content) {
@@ -1234,9 +1241,10 @@
             if (thinking) msg.thinking = thinking;
             setMessages(prev => [...prev, msg]);
           }
-          // Persist Claude Code session ID
-          if (meta?.sessionId && !agent.sessionId && onUpdateAgent) {
-            onUpdateAgent({ ...agent, sessionId: meta.sessionId });
+          // Persist Claude Code session ID — use ref for latest agent
+          const currentAgent = agentRef.current;
+          if (meta?.sessionId && !currentAgent.sessionId && onUpdateAgent) {
+            onUpdateAgent({ ...currentAgent, sessionId: meta.sessionId });
           }
           streamTextRef.current = '';
           streamThinkingRef.current = '';
@@ -1247,7 +1255,7 @@
         });
 
         window.agentHub.onStreamError((id, err) => {
-          if (id !== activeRequestIdRef.current) return;
+          if (cancelled || id !== activeRequestIdRef.current) return;
           setMessages(prev => [...prev, { role: 'error', content: err || 'Something went wrong' }]);
           streamTextRef.current = '';
           streamThinkingRef.current = '';
@@ -1257,8 +1265,16 @@
           setLoading(false);
         });
 
-        return () => window.agentHub.removeStreamListeners();
-      }, [agent.id, agent.sessionId]);
+        return () => {
+          // Mark all callbacks from this effect as dead
+          cancelled = true;
+          // Discard any in-flight stream state so it doesn't leak into the next agent
+          activeRequestIdRef.current = null;
+          streamTextRef.current = '';
+          streamThinkingRef.current = '';
+          window.agentHub.removeStreamListeners();
+        };
+      }, [agent.id]);
 
       // Discover slash commands dynamically from the CLI tool
       useEffect(() => {
