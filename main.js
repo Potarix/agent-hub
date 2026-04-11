@@ -1,8 +1,9 @@
-const { app, BrowserWindow, ipcMain, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeTheme, shell } = require('electron');
 const path = require('path');
 const https = require('https');
 const http = require('http');
-const { spawn, execSync } = require('child_process');
+const { spawn, exec, execSync } = require('child_process');
+const os = require('os');
 
 let mainWindow;
 
@@ -13,7 +14,7 @@ function createWindow() {
     minWidth: 900,
     minHeight: 600,
     titleBarStyle: 'hiddenInset',
-    backgroundColor: '#0a0a0f',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0a0a0f' : '#f5f5f7',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -22,12 +23,30 @@ function createWindow() {
   });
 
   mainWindow.loadFile('index.html');
-  nativeTheme.themeSource = 'dark';
+  nativeTheme.themeSource = 'system';
+
+  // Update background color to match system theme
+  const updateBgColor = () => {
+    const isDark = nativeTheme.shouldUseDarkColors;
+    mainWindow.setBackgroundColor(isDark ? '#0a0a0f' : '#f5f5f7');
+  };
+  updateBgColor();
+
+  // Notify renderer when macOS theme changes
+  nativeTheme.on('updated', () => {
+    updateBgColor();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('theme:changed', nativeTheme.shouldUseDarkColors);
+    }
+  });
 }
 
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+
+// ── Theme IPC ──
+ipcMain.handle('theme:get', () => nativeTheme.shouldUseDarkColors);
 
 // ── HTTP helpers ──
 
@@ -343,10 +362,28 @@ async function pingHermes(agent) {
 // Track persistent Claude Code sessions (kept alive between messages)
 const claudeCodeSessions = {};
 
+// Get a full login-shell environment so spawned processes find CLI tools and auth tokens
+let _loginEnv = null;
+function getLoginEnv() {
+  if (_loginEnv) return _loginEnv;
+  try {
+    const raw = execSync('/bin/bash -l -c env', { timeout: 5000, encoding: 'utf-8' });
+    const env = {};
+    for (const line of raw.split('\n')) {
+      const idx = line.indexOf('=');
+      if (idx > 0) env[line.slice(0, idx)] = line.slice(idx + 1);
+    }
+    _loginEnv = env;
+  } catch {
+    _loginEnv = process.env;
+  }
+  return _loginEnv;
+}
+
 function runLocalCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const proc = spawn(command, args, {
-      env: { ...process.env, ...(options.env || {}) },
+      env: { ...getLoginEnv(), ...(options.env || {}) },
       cwd: options.cwd || process.env.HOME,
       shell: true,
     });
@@ -414,9 +451,8 @@ async function chatClaudeCode(agent, messages) {
   const escapedMsg = lastUserMsg.content;
 
   // Build args for one-shot print mode
-  const args = ['-p', escapedMsg, '--no-input'];
+  const args = ['-p', escapedMsg];
   if (agent.model) args.push('--model', agent.model);
-  if (agent.maxTokens) args.push('--max-tokens', String(agent.maxTokens));
   if (agent.claudeArgs) {
     // Allow custom args like --allowedTools, --permission-mode, etc.
     args.push(...agent.claudeArgs.split(/\s+/).filter(Boolean));
@@ -435,9 +471,16 @@ async function chatClaudeCode(agent, messages) {
       timeout: agent.timeout || 300000,
     });
     const content = extractClaudeCodeResponse(output);
+    if (content.includes('401') || content.includes('authentication_error') || content.includes('Failed to authenticate')) {
+      return { error: 'Claude Code is not authenticated. Click Login below to sign in.' };
+    }
     return { content };
   } catch (err) {
-    return { error: err.message };
+    const msg = err.message || '';
+    if (msg.includes('401') || msg.includes('authentication_error') || msg.includes('Failed to authenticate')) {
+      return { error: 'Claude Code is not authenticated. Click Login below to sign in.' };
+    }
+    return { error: msg };
   }
 }
 
@@ -451,14 +494,415 @@ async function pingClaudeCode(agent) {
   }
 }
 
+// ── Provider: OpenClaw Local ──
+
+async function chatOpenClawLocal(agent, messages) {
+  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+  if (!lastUserMsg) return { error: 'No user message found' };
+
+  const agentId = agent.openclawAgent || 'main';
+  const escapedMsg = lastUserMsg.content.replace(/'/g, "'\\''").replace(/"/g, '\\"');
+  const workDir = agent.workDir || process.env.HOME;
+
+  let cmd = `openclaw agent --agent '${agentId}' --message '${escapedMsg}' --json 2>&1`;
+
+  try {
+    const output = await runLocalCommand('bash', ['-l', '-c', cmd], { cwd: workDir, timeout: 300000 });
+    const content = extractOpenClawResponse(output);
+    return { content };
+  } catch (err) {
+    const errMsg = err.message || '';
+    const content = extractOpenClawResponse(errMsg);
+    if (content && content.length > 10 && !content.includes('Permission denied') && !content.includes('command not found')) {
+      return { content };
+    }
+    return { error: err.message };
+  }
+}
+
+async function pingOpenClawLocal() {
+  try {
+    const output = await runLocalCommand('bash', ['-l', '-c', 'openclaw --version 2>&1'], { timeout: 10000 });
+    return { online: true, info: output.trim() };
+  } catch (err) {
+    return { online: false, error: err.message };
+  }
+}
+
+// ── Provider: Hermes Local ──
+
+async function chatHermesLocal(agent, messages) {
+  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+  if (!lastUserMsg) return { error: 'No user message found' };
+
+  const escapedMsg = lastUserMsg.content.replace(/'/g, "'\\''").replace(/"/g, '\\"');
+  const workDir = agent.workDir || process.env.HOME;
+
+  let cmd = 'hermes chat';
+  if (agent.hermesProvider) cmd += ` --provider '${agent.hermesProvider}'`;
+  if (agent.model) cmd += ` --model '${agent.model}'`;
+  if (agent.hermesWorktree) cmd += ` --worktree '${agent.hermesWorktree}'`;
+  cmd += ` -q '${escapedMsg}' 2>&1`;
+
+  try {
+    const output = await runLocalCommand('bash', ['-l', '-c', cmd], { cwd: workDir, timeout: 300000 });
+    const content = extractHermesResponse(output);
+    return { content };
+  } catch (err) {
+    const errMsg = err.message || '';
+    const content = extractHermesResponse(errMsg);
+    if (content && content.length > 10 && !content.includes('Permission denied') && !content.includes('command not found')) {
+      return { content };
+    }
+    return { error: err.message };
+  }
+}
+
+async function pingHermesLocal() {
+  try {
+    const output = await runLocalCommand('bash', ['-l', '-c', 'hermes --version 2>&1'], { timeout: 10000 });
+    return { online: true, info: output.trim() };
+  } catch (err) {
+    return { online: false, error: err.message };
+  }
+}
+
+// ── In-app auth flows (no terminal needed) ──
+
+// Track running auth processes so we can report status
+const authProcesses = {};
+
+ipcMain.handle('agent:auth-login', async (_event, agent) => {
+  try {
+    if (agent.provider === 'claude-code') {
+      const claudePath = agent.claudePath || 'claude';
+
+      return new Promise((resolve) => {
+        const proc = spawn(claudePath, ['auth', 'login'], {
+          env: getLoginEnv(),
+          cwd: agent.workDir || process.env.HOME,
+          shell: true,
+        });
+
+        let output = '';
+        let urlOpened = false;
+
+        const handleData = (chunk) => {
+          const text = chunk.toString();
+          output += text;
+
+          // Claude auth login prints an OAuth URL — grab it and open in the default browser
+          const urlMatch = text.match(/(https?:\/\/[^\s]+)/);
+          if (urlMatch && !urlOpened) {
+            urlOpened = true;
+            shell.openExternal(urlMatch[1]);
+            // Let the renderer know we opened the browser
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('agent:auth-status', agent.id, 'browser-opened');
+            }
+          }
+        };
+
+        proc.stdout.on('data', handleData);
+        proc.stderr.on('data', handleData);
+
+        const timer = setTimeout(() => {
+          proc.kill();
+          resolve({ error: 'Auth timed out after 2 minutes. Please try again.' });
+        }, 120000);
+
+        proc.on('close', (code) => {
+          clearTimeout(timer);
+          delete authProcesses[agent.id];
+          if (code === 0 || output.toLowerCase().includes('success') || output.toLowerCase().includes('logged in')) {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('agent:auth-status', agent.id, 'authenticated');
+            }
+            resolve({ ok: true, message: 'Successfully authenticated!' });
+          } else if (urlOpened) {
+            // Process ended but we opened a URL — auth might have completed in browser
+            resolve({ ok: true, message: 'Auth flow completed. Try sending a message to verify.' });
+          } else {
+            resolve({ error: output.trim() || `Auth exited with code ${code}` });
+          }
+        });
+
+        proc.on('error', (err) => {
+          clearTimeout(timer);
+          delete authProcesses[agent.id];
+          resolve({ error: err.message });
+        });
+
+        authProcesses[agent.id] = proc;
+      });
+
+    } else if (agent.provider === 'openclaw-local') {
+      const output = await runLocalCommand('bash', ['-l', '-c', 'openclaw setup 2>&1'], { timeout: 60000 });
+      return { ok: true, message: output.trim() };
+    } else if (agent.provider === 'hermes-local') {
+      const output = await runLocalCommand('bash', ['-l', '-c', 'hermes setup 2>&1'], { timeout: 60000 });
+      return { ok: true, message: output.trim() };
+    } else {
+      return { error: 'In-app auth not supported for this provider.' };
+    }
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('agent:auth-status', async (_event, agent) => {
+  try {
+    if (agent.provider === 'claude-code') {
+      const claudePath = agent.claudePath || 'claude';
+      const output = await runLocalCommand(claudePath, ['auth', 'status'], {
+        cwd: agent.workDir || process.env.HOME,
+        timeout: 10000,
+      });
+      const text = output.toLowerCase();
+      const loggedIn = text.includes('logged in') || text.includes('authenticated') || text.includes('valid');
+      return { authenticated: loggedIn, detail: output.trim() };
+    }
+    return { authenticated: false, detail: 'Unknown provider' };
+  } catch (err) {
+    return { authenticated: false, detail: err.message };
+  }
+});
+
+// Keep the old handler as a no-op fallback so nothing crashes
+ipcMain.handle('agent:open-auth-terminal', async (_event, agent) => {
+  // Redirect to the new in-app auth flow
+  return { error: 'Please use the Login button instead.' };
+});
+
+// ── Provider: Codex (OpenAI) Local ──
+
+function extractCodexResponse(output) {
+  // Strip ANSI escape codes and noise
+  const cleaned = output
+    .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
+    .replace(/\r/g, '')
+    .split('\n')
+    .filter(l =>
+      l.trim() &&
+      !l.startsWith('╭') && !l.startsWith('╰') && !l.startsWith('│') &&
+      !l.startsWith('⠋') && !l.startsWith('⠙') && !l.startsWith('⠹') &&
+      !l.startsWith('⠸') && !l.startsWith('⠼') && !l.startsWith('⠴') &&
+      !l.startsWith('⠦') && !l.startsWith('⠧') && !l.startsWith('⠇') && !l.startsWith('⠏')
+    )
+    .join('\n')
+    .trim();
+  return cleaned || output.trim();
+}
+
+async function chatCodexLocal(agent, messages) {
+  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+  if (!lastUserMsg) return { error: 'No user message found' };
+
+  const codexPath = agent.codexPath || 'codex';
+  const workDir = agent.workDir || process.env.HOME;
+  const escapedMsg = lastUserMsg.content;
+
+  const args = [escapedMsg];
+  if (agent.model) args.push('--model', agent.model);
+  if (agent.codexArgs) {
+    args.push(...agent.codexArgs.split(/\s+/).filter(Boolean));
+  }
+
+  try {
+    const output = await runLocalCommand(codexPath, args, {
+      cwd: workDir,
+      timeout: agent.timeout || 300000,
+    });
+    const content = extractCodexResponse(output);
+    return { content };
+  } catch (err) {
+    const msg = err.message || '';
+    if (msg.includes('401') || msg.includes('authentication') || msg.includes('API key')) {
+      return { error: 'Codex is not authenticated. Make sure your OPENAI_API_KEY is set.\n\nRun: export OPENAI_API_KEY=your-key\n\nOr add it to your shell profile (~/.zshrc or ~/.bashrc).' };
+    }
+    return { error: msg };
+  }
+}
+
+async function pingCodexLocal(agent) {
+  try {
+    const codexPath = agent.codexPath || 'codex';
+    const output = await runLocalCommand(codexPath, ['--version'], { timeout: 10000 });
+    return { online: true, info: output.trim() };
+  } catch (err) {
+    return { online: false, error: err.message };
+  }
+}
+
+async function chatCodexSSH(agent, messages) {
+  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+  if (!lastUserMsg) return { error: 'No user message found' };
+
+  const escapedMsg = lastUserMsg.content.replace(/'/g, "'\\''").replace(/"/g, '\\"');
+  let cmd = `codex '${escapedMsg}'`;
+  if (agent.model) cmd += ` --model '${agent.model}'`;
+  cmd += ' 2>&1';
+
+  try {
+    const output = await runSSHCommand(agent, cmd, 300000);
+    const content = extractCodexResponse(output);
+    return { content };
+  } catch (err) {
+    const errMsg = err.message || '';
+    const content = extractCodexResponse(errMsg);
+    if (content && content.length > 10 && !content.includes('Permission denied') && !content.includes('command not found')) {
+      return { content };
+    }
+    return { error: err.message };
+  }
+}
+
+async function pingCodexSSH(agent) {
+  try {
+    const output = await runSSHCommand(agent, 'codex --version 2>&1', 15000);
+    return { online: true, info: output.trim() };
+  } catch (err) {
+    return { online: false, error: err.message };
+  }
+}
+
+// ── Slash Commands ──
+
+// Define available slash commands per provider
+const SLASH_COMMANDS = {
+  'claude-code': {
+    '/help': { desc: 'Show available commands', cmd: (agent) => ({ cli: 'claude', args: ['-p', '/help'], cwd: agent.workDir || process.env.HOME }) },
+    '/model': { desc: 'Show or change model', cmd: (agent, arg) => arg ? { result: `Model set to: ${arg}` , setField: { model: arg } } : { cli: 'claude', args: ['-p', '/model'], cwd: agent.workDir || process.env.HOME } },
+    '/cost': { desc: 'Show session cost', cmd: (agent) => ({ cli: 'claude', args: ['-p', '/cost'], cwd: agent.workDir || process.env.HOME }) },
+    '/compact': { desc: 'Compact conversation history', cmd: (agent) => ({ cli: 'claude', args: ['-p', '/compact'], cwd: agent.workDir || process.env.HOME }) },
+    '/clear': { desc: 'Clear chat history', local: true },
+    '/status': { desc: 'Check connection status', local: true },
+    '/doctor': { desc: 'Run Claude doctor diagnostics', cmd: (agent) => ({ cli: 'claude', args: ['-p', '/doctor'], cwd: agent.workDir || process.env.HOME }) },
+  },
+  'openclaw': {
+    '/help': { desc: 'Show available commands', cmd: (agent) => ({ ssh: true, command: 'openclaw --help 2>&1' }) },
+    '/agents': { desc: 'List available agents', cmd: (agent) => ({ ssh: true, command: 'openclaw agent list --json 2>&1 || openclaw agent list 2>&1' }) },
+    '/status': { desc: 'Check agent status', cmd: (agent) => ({ ssh: true, command: 'openclaw status --json 2>&1 || openclaw status 2>&1' }) },
+    '/clear': { desc: 'Clear chat history', local: true },
+  },
+  'openclaw-local': {
+    '/help': { desc: 'Show available commands', cmd: (agent) => ({ local: true, command: 'openclaw --help 2>&1' }) },
+    '/agents': { desc: 'List available agents', cmd: (agent) => ({ local: true, command: 'openclaw agent list --json 2>&1 || openclaw agent list 2>&1' }) },
+    '/status': { desc: 'Check agent status', cmd: (agent) => ({ local: true, command: 'openclaw status --json 2>&1 || openclaw status 2>&1' }) },
+    '/clear': { desc: 'Clear chat history', local: true },
+  },
+  'hermes': {
+    '/help': { desc: 'Show available commands', cmd: (agent) => ({ ssh: true, command: 'hermes --help 2>&1' }) },
+    '/tools': { desc: 'List available tools', cmd: (agent) => ({ ssh: true, command: 'hermes tools list 2>&1 || hermes tools 2>&1' }) },
+    '/status': { desc: 'Check connection status', local: true },
+    '/clear': { desc: 'Clear chat history', local: true },
+  },
+  'hermes-local': {
+    '/help': { desc: 'Show available commands', cmd: (agent) => ({ local: true, command: 'hermes --help 2>&1' }) },
+    '/tools': { desc: 'List available tools', cmd: (agent) => ({ local: true, command: 'hermes tools list 2>&1 || hermes tools 2>&1' }) },
+    '/status': { desc: 'Check connection status', local: true },
+    '/clear': { desc: 'Clear chat history', local: true },
+  },
+  'openai-compat': {
+    '/models': { desc: 'List available models', cmd: (agent) => ({ http: true, url: `${agent.baseUrl}/v1/models`, apiKey: agent.apiKey }) },
+    '/status': { desc: 'Check connection status', local: true },
+    '/clear': { desc: 'Clear chat history', local: true },
+  },
+  'codex': {
+    '/help': { desc: 'Show available commands', cmd: (agent) => ({ local: true, command: `${agent.codexPath || 'codex'} --help 2>&1` }) },
+    '/clear': { desc: 'Clear chat history', local: true },
+    '/status': { desc: 'Check connection status', local: true },
+  },
+  'codex-ssh': {
+    '/help': { desc: 'Show available commands', cmd: (agent) => ({ ssh: true, command: 'codex --help 2>&1' }) },
+    '/clear': { desc: 'Clear chat history', local: true },
+    '/status': { desc: 'Check connection status', local: true },
+  },
+};
+
+ipcMain.handle('agent:slash-commands', async (_event, provider) => {
+  const cmds = SLASH_COMMANDS[provider] || {};
+  return Object.entries(cmds).map(([name, info]) => ({ name, desc: info.desc }));
+});
+
+ipcMain.handle('agent:exec-slash', async (_event, agent, command) => {
+  const parts = command.trim().split(/\s+/);
+  const slashCmd = parts[0].toLowerCase();
+  const arg = parts.slice(1).join(' ');
+  const provider = agent.provider;
+  const cmds = SLASH_COMMANDS[provider] || {};
+  const cmdDef = cmds[slashCmd];
+
+  if (!cmdDef) {
+    return { error: `Unknown command: ${slashCmd}. Type / to see available commands.` };
+  }
+
+  // Local-only commands (clear, status) are handled in the renderer
+  if (cmdDef.local) {
+    return { local: true, command: slashCmd };
+  }
+
+  try {
+    const spec = cmdDef.cmd(agent, arg);
+
+    // Direct result (like setting a field)
+    if (spec.result) {
+      return { content: spec.result, setField: spec.setField };
+    }
+
+    // SSH command
+    if (spec.ssh) {
+      const output = await runSSHCommand(agent, spec.command, 30000);
+      return { content: output.trim() };
+    }
+
+    // Local shell command
+    if (spec.local) {
+      const output = await runLocalCommand('bash', ['-l', '-c', spec.command], { cwd: agent.workDir || process.env.HOME, timeout: 30000 });
+      return { content: output.trim() };
+    }
+
+    // CLI command (claude code)
+    if (spec.cli) {
+      const output = await runLocalCommand(spec.cli, spec.args, { cwd: spec.cwd || process.env.HOME, timeout: 30000 });
+      return { content: extractClaudeCodeResponse(output) };
+    }
+
+    // HTTP request (openai-compat models list)
+    if (spec.http) {
+      const headers = {};
+      if (spec.apiKey) headers['Authorization'] = `Bearer ${spec.apiKey}`;
+      const res = await makeRequest(spec.url, { method: 'GET', headers });
+      try {
+        const data = JSON.parse(res.body);
+        if (data.data) {
+          const modelNames = data.data.map(m => m.id).join('\n');
+          return { content: `Available models:\n${modelNames}` };
+        }
+        return { content: res.body };
+      } catch {
+        return { content: res.body };
+      }
+    }
+
+    return { error: 'Could not execute command' };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
 // ── IPC Handlers ──
 
 ipcMain.handle('agent:chat', async (_event, agent, messages) => {
   try {
     if (agent.provider === 'anthropic') return await chatAnthropic(agent, messages);
     if (agent.provider === 'openclaw') return await chatOpenClaw(agent, messages);
+    if (agent.provider === 'openclaw-local') return await chatOpenClawLocal(agent, messages);
     if (agent.provider === 'hermes') return await chatHermes(agent, messages);
+    if (agent.provider === 'hermes-local') return await chatHermesLocal(agent, messages);
     if (agent.provider === 'claude-code') return await chatClaudeCode(agent, messages);
+    if (agent.provider === 'codex') return await chatCodexLocal(agent, messages);
+    if (agent.provider === 'codex-ssh') return await chatCodexSSH(agent, messages);
     return await chatOpenAI(agent, messages);
   } catch (err) {
     return { error: err.message };
@@ -491,8 +935,16 @@ ipcMain.handle('agent:ping', async (_event, agent) => {
       return await pingOpenClaw(agent);
     } else if (agent.provider === 'hermes') {
       return await pingHermes(agent);
+    } else if (agent.provider === 'openclaw-local') {
+      return await pingOpenClawLocal();
+    } else if (agent.provider === 'hermes-local') {
+      return await pingHermesLocal();
     } else if (agent.provider === 'claude-code') {
       return await pingClaudeCode(agent);
+    } else if (agent.provider === 'codex') {
+      return await pingCodexLocal(agent);
+    } else if (agent.provider === 'codex-ssh') {
+      return await pingCodexSSH(agent);
     } else {
       const url = `${agent.baseUrl}/v1/models`;
       const res = await makeRequest(url, {

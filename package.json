@@ -5,6 +5,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "start-bg": "nohup electron . >/dev/null 2>&1 & disown && echo 'Agent Hub running — close this terminal.'",
     "dev": "electron . --dev"
   },
   "dependencies": {

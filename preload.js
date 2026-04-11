@@ -19,4 +19,23 @@ contextBridge.exposeInMainWorld('agentHub', {
 
   // Ping agent
   ping: (agent) => ipcRenderer.invoke('agent:ping', agent),
+
+  // Slash commands
+  getSlashCommands: (provider) => ipcRenderer.invoke('agent:slash-commands', provider),
+  execSlash: (agent, command) => ipcRenderer.invoke('agent:exec-slash', agent, command),
+
+  // Auth (in-app, no terminal needed)
+  authLogin: (agent) => ipcRenderer.invoke('agent:auth-login', agent),
+  authStatus: (agent) => ipcRenderer.invoke('agent:auth-status', agent),
+  onAuthStatus: (cb) => ipcRenderer.on('agent:auth-status', (_e, agentId, status) => cb(agentId, status)),
+  removeAuthListeners: () => {
+    ipcRenderer.removeAllListeners('agent:auth-status');
+  },
+
+  // Legacy (kept for compat, redirects to in-app auth)
+  openAuthTerminal: (agent) => ipcRenderer.invoke('agent:open-auth-terminal', agent),
+
+  // Theme
+  getSystemTheme: () => ipcRenderer.invoke('theme:get'),
+  onThemeChange: (cb) => ipcRenderer.on('theme:changed', (_e, isDark) => cb(isDark)),
 });
