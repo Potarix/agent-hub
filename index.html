@@ -375,6 +375,41 @@
       border-radius: 5px;
       border: 1px solid var(--border);
     }
+    .thinking-block {
+      margin-bottom: 8px;
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+    }
+    .thinking-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: none;
+      border: none;
+      color: var(--text-2);
+      font-size: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      cursor: pointer;
+      padding: 4px 0;
+      transition: color var(--transition);
+    }
+    .thinking-toggle:hover { color: var(--accent); }
+    .thinking-icon { font-size: 10px; }
+    .thinking-content {
+      font-size: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--text-2);
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      margin-top: 4px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 300px;
+      overflow-y: auto;
+      line-height: 1.5;
+    }
     .msg.error {
       align-self: center;
       background: var(--red-dim);
@@ -613,7 +648,6 @@
 
     /* ── Provider colors ── */
     .provider-openclaws { background: linear-gradient(135deg, #f97316, #ea580c); color: white; }
-    .provider-anthropic { background: linear-gradient(135deg, #d4a574, #c4956a); color: #1a1a2e; }
     .provider-openai { background: linear-gradient(135deg, #10a37f, #0d8c6d); color: white; }
     .provider-claude-code { background: linear-gradient(135deg, #f59e0b, #d97706); color: #1a1a2e; }
     .provider-hermes { background: linear-gradient(135deg, #a855f7, #7c3aed); color: white; }
@@ -794,6 +828,17 @@
       localStorage.setItem('agent-hub-agents', JSON.stringify(agents));
     }
 
+    function loadChats() {
+      try {
+        const saved = localStorage.getItem('agent-hub-chats');
+        return saved ? JSON.parse(saved) : {};
+      } catch { return {}; }
+    }
+
+    function saveChats(chats) {
+      localStorage.setItem('agent-hub-chats', JSON.stringify(chats));
+    }
+
     // ── Auth Login Button (in-app, no terminal) ──
     function AuthLoginButton({ agent, onSuccess }) {
       const [authState, setAuthState] = useState('idle'); // idle | logging-in | waiting-for-code | success | error
@@ -930,7 +975,7 @@
     function App() {
       const [agents, setAgents] = useState(loadAgents);
       const [activeId, setActiveId] = useState(null);
-      const [chats, setChats] = useState({});
+      const [chats, setChats] = useState(loadChats);
       const [statuses, setStatuses] = useState({});
       const [showSettings, setShowSettings] = useState(false);
       const [editAgent, setEditAgent] = useState(null);
@@ -939,6 +984,7 @@
       const activeAgent = agents.find(a => a.id === activeId);
 
       useEffect(() => { saveAgents(agents); }, [agents]);
+      useEffect(() => { saveChats(chats); }, [chats]);
 
       // Sync theme with macOS system appearance
       useEffect(() => {
@@ -985,6 +1031,7 @@
 
       const removeAgent = (id) => {
         setAgents(prev => prev.filter(a => a.id !== id));
+        setChats(prev => { const next = { ...prev }; delete next[id]; return next; });
         if (activeId === id) setActiveId(null);
         setEditAgent(null);
       };
@@ -1015,6 +1062,7 @@
                   status={statuses[activeAgent.id]}
                   messages={chats[activeAgent.id] || []}
                   setMessages={(msgs) => setChats(prev => ({ ...prev, [activeAgent.id]: typeof msgs === 'function' ? msgs(prev[activeAgent.id] || []) : msgs }))}
+                  onUpdateAgent={updateAgent}
                 />
               ) : (
                 <Dashboard agents={agents} statuses={statuses} onlineCount={onlineCount} />
@@ -1106,7 +1154,23 @@
     }
 
     // ── Chat View ──
-    function ChatView({ agent, status, messages, setMessages }) {
+    function ThinkingBlock({ thinking }) {
+      const [open, setOpen] = useState(false);
+      if (!thinking) return null;
+      return (
+        <div className="thinking-block">
+          <button className="thinking-toggle" onClick={() => setOpen(!open)}>
+            <span className="thinking-icon">{open ? '▾' : '▸'}</span>
+            <span>Thinking</span>
+          </button>
+          {open && (
+            <div className="thinking-content">{thinking}</div>
+          )}
+        </div>
+      );
+    }
+
+    function ChatView({ agent, status, messages, setMessages, onUpdateAgent }) {
       const [input, setInput] = useState('');
       const [loading, setLoading] = useState(false);
       const [streamText, setStreamText] = useState('');
@@ -1155,6 +1219,10 @@
         if (cmd === '/clear') {
           setMessages([]);
           setMessages(prev => [...prev, { role: 'system', content: 'Chat history cleared.' }]);
+          // Reset Claude Code session so next message starts a fresh conversation
+          if (agent.sessionId && onUpdateAgent) {
+            onUpdateAgent({ ...agent, sessionId: null });
+          }
           return;
         }
 
@@ -1216,7 +1284,13 @@
           if (res.error) {
             setMessages(prev => [...prev, { role: 'error', content: res.error }]);
           } else if (res.content) {
-            setMessages(prev => [...prev, { role: 'assistant', content: res.content }]);
+            const msg = { role: 'assistant', content: res.content };
+            if (res.thinking) msg.thinking = res.thinking;
+            setMessages(prev => [...prev, msg]);
+          }
+          // Persist Claude Code session ID for conversation continuity
+          if (res.sessionId && !agent.sessionId && onUpdateAgent) {
+            onUpdateAgent({ ...agent, sessionId: res.sessionId });
           }
         } catch (err) {
           setMessages(prev => [...prev, { role: 'error', content: err.message || 'Something went wrong' }]);
@@ -1293,6 +1367,9 @@
             )}
             {messages.map((msg, i) => (
               <div key={i} className={`msg ${msg.role}`}>
+                {msg.thinking && (
+                  <ThinkingBlock thinking={msg.thinking} />
+                )}
                 {msg.content}
                 {msg.role === 'error' && (msg.content.includes('not authenticated') || msg.content.includes('OAuth') || msg.content.includes('auth') || msg.content.includes('setup')) && (
                   <AuthLoginButton agent={agent} onSuccess={() => {
@@ -1378,7 +1455,6 @@
         'openclaw': 'provider-openclaws',
         'hermes': 'provider-hermes',
         'openai-compat': 'provider-generic',
-        'anthropic': 'provider-anthropic',
         'openai': 'provider-openai',
         'codex': 'provider-codex',
       };
@@ -1517,6 +1593,15 @@
                         <input type="checkbox" checked={form.continueSession || false} onChange={e => setForm(f => ({ ...f, continueSession: e.target.checked }))} style={{ width: 'auto' }} />
                         Continue most recent session (--continue)
                       </label>
+                    </div>
+                    <div className="form-row">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <input type="checkbox" checked={form.showThinking || false} onChange={e => setForm(f => ({ ...f, showThinking: e.target.checked }))} style={{ width: 'auto' }} />
+                        Show Thinking
+                      </label>
+                      <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 4 }}>
+                        Display the model's internal reasoning before its answer
+                      </div>
                     </div>
                     <div className="form-row">
                       <label>Timeout (seconds)</label>
@@ -1674,27 +1759,11 @@
                   </>
                 )}
 
-                {form.provider === 'anthropic' && (
-                  <>
-                    <div className="form-row">
-                      <label>API Key</label>
-                      <input type="password" value={form.apiKey || ''} onChange={e => setForm(f => ({ ...f, apiKey: e.target.value }))} placeholder="sk-ant-..." />
-                    </div>
-                    <div className="form-row">
-                      <label>Model</label>
-                      <input value={form.model || ''} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} placeholder="claude-sonnet-4-20250514" />
-                    </div>
-                  </>
-                )}
-
                 <h3>Test Connection</h3>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <button className="btn btn-test" onClick={handleTest} disabled={testStatus === 'testing'}>
                     {testStatus === 'testing' ? 'Testing...' : 'Test Connection'}
                   </button>
-                  {form.provider === 'anthropic' && !form.apiKey && (
-                    <span style={{ fontSize: 11, color: 'var(--orange)' }}>API key required for Anthropic</span>
-                  )}
                 </div>
                 {testStatus && testStatus !== 'testing' && (
                   <div className={`test-result ${testStatus.ok ? 'success' : 'failure'}`}>
@@ -1714,6 +1783,17 @@
                   <label>Max Tokens</label>
                   <input type="number" value={form.maxTokens || 4096} onChange={e => setForm(f => ({ ...f, maxTokens: parseInt(e.target.value) || 16384 }))} />
                 </div>
+                {form.provider === 'openai-compat' && (
+                  <div className="form-row">
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input type="checkbox" checked={form.showThinking || false} onChange={e => setForm(f => ({ ...f, showThinking: e.target.checked }))} style={{ width: 'auto' }} />
+                      Show Thinking
+                    </label>
+                    <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 4 }}>
+                      Show reasoning content if the model supports it
+                    </div>
+                  </div>
+                )}
 
                 <div className="form-actions" style={{ justifyContent: 'space-between' }}>
                   {agents.find(a => a.id === form.id) ? (

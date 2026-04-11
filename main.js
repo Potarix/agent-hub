@@ -449,15 +449,17 @@ async function chatClaudeCode(agent, messages) {
   const workDir = agent.workDir || process.env.HOME;
   const escapedMsg = lastUserMsg.content;
 
-  // Build args for one-shot print mode
-  const args = ['-p', escapedMsg];
+  // Use stream-json + verbose when showThinking is on, so we can capture thinking blocks
+  const useStreamJson = !!agent.showThinking;
+  const args = ['-p', escapedMsg, '--output-format', useStreamJson ? 'stream-json' : 'json'];
+  if (useStreamJson) args.push('--verbose');
   if (agent.model) args.push('--model', agent.model);
   if (agent.claudeArgs) {
     // Allow custom args like --allowedTools, --permission-mode, etc.
     args.push(...agent.claudeArgs.split(/\s+/).filter(Boolean));
   }
 
-  // If a session ID is stored, continue it
+  // If a session ID is stored, continue it for conversation context
   if (agent.sessionId) {
     args.push('--continue', agent.sessionId);
   } else if (agent.continueSession) {
@@ -469,11 +471,44 @@ async function chatClaudeCode(agent, messages) {
       cwd: workDir,
       timeout: agent.timeout || 300000,
     });
-    const content = extractClaudeCodeResponse(output);
+
+    let content, sessionId, thinking = null;
+
+    if (useStreamJson) {
+      // Parse stream-json: multiple JSON lines — extract thinking, result, and session_id
+      const lines = output.split('\n').filter(l => l.trim());
+      for (const line of lines) {
+        try {
+          const evt = JSON.parse(line);
+          if (evt.type === 'assistant' && evt.message?.content) {
+            for (const block of evt.message.content) {
+              if (block.type === 'thinking' && block.thinking) {
+                thinking = (thinking || '') + block.thinking;
+              }
+            }
+          }
+          if (evt.type === 'result') {
+            content = evt.result || '';
+            sessionId = evt.session_id || null;
+          }
+        } catch { /* skip non-JSON lines */ }
+      }
+      if (!content) content = extractClaudeCodeResponse(output);
+    } else {
+      // Parse single JSON result
+      try {
+        const data = JSON.parse(output);
+        content = data.result || data.content || data.text || output.trim();
+        sessionId = data.session_id || null;
+      } catch {
+        content = extractClaudeCodeResponse(output);
+      }
+    }
+
     if (content.includes('401') || content.includes('authentication_error') || content.includes('Failed to authenticate')) {
       return { error: 'Claude Code is not authenticated. Click Login below to sign in.' };
     }
-    return { content };
+    return { content, sessionId, thinking };
   } catch (err) {
     const msg = err.message || '';
     if (msg.includes('401') || msg.includes('authentication_error') || msg.includes('Failed to authenticate')) {
@@ -935,7 +970,6 @@ ipcMain.handle('agent:exec-slash', async (_event, agent, command) => {
 
 ipcMain.handle('agent:chat', async (_event, agent, messages) => {
   try {
-    if (agent.provider === 'anthropic') return await chatAnthropic(agent, messages);
     if (agent.provider === 'openclaw') return await chatOpenClaw(agent, messages);
     if (agent.provider === 'openclaw-local') return await chatOpenClawLocal(agent, messages);
     if (agent.provider === 'hermes') return await chatHermes(agent, messages);
@@ -951,8 +985,7 @@ ipcMain.handle('agent:chat', async (_event, agent, messages) => {
 
 ipcMain.on('agent:chat-stream', async (event, requestId, agent, messages) => {
   try {
-    if (agent.provider === 'anthropic') await streamAnthropic(event, requestId, agent, messages);
-    else if (agent.provider === 'openclaw') await streamOpenClaw(event, requestId, agent, messages);
+    if (agent.provider === 'openclaw') await streamOpenClaw(event, requestId, agent, messages);
     else await streamOpenAI(event, requestId, agent, messages);
   } catch (err) {
     event.sender.send('agent:stream-error', requestId, err.message);
@@ -961,17 +994,7 @@ ipcMain.on('agent:chat-stream', async (event, requestId, agent, messages) => {
 
 ipcMain.handle('agent:ping', async (_event, agent) => {
   try {
-    if (agent.provider === 'anthropic') {
-      const res = await makeRequest('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': agent.apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-      }, JSON.stringify({ model: agent.model || 'claude-sonnet-4-20250514', max_tokens: 5, messages: [{ role: 'user', content: 'hi' }] }));
-      return { online: res.status === 200 };
-    } else if (agent.provider === 'openclaw') {
+    if (agent.provider === 'openclaw') {
       return await pingOpenClaw(agent);
     } else if (agent.provider === 'hermes') {
       return await pingHermes(agent);
@@ -1013,7 +1036,11 @@ async function chatOpenAI(agent, messages) {
   const res = await makeRequest(url, { method: 'POST', headers }, body);
   const data = JSON.parse(res.body);
   if (res.status !== 200) return { error: data.error?.message || res.body };
-  return { content: data.choices?.[0]?.message?.content || '' };
+  const msg = data.choices?.[0]?.message;
+  return {
+    content: msg?.content || '',
+    thinking: msg?.reasoning_content || null,
+  };
 }
 
 async function streamOpenAI(event, requestId, agent, messages) {
@@ -1030,73 +1057,3 @@ async function streamOpenAI(event, requestId, agent, messages) {
   await makeStreamRequest(url, { method: 'POST', headers }, body, event, requestId);
 }
 
-// ── Provider: Anthropic ──
-
-async function chatAnthropic(agent, messages) {
-  const systemMsg = messages.find(m => m.role === 'system');
-  const chatMsgs = messages.filter(m => m.role !== 'system');
-  const body = {
-    model: agent.model || 'claude-sonnet-4-20250514',
-    max_tokens: agent.maxTokens || 16384,
-    messages: chatMsgs,
-  };
-  if (systemMsg) body.system = systemMsg.content;
-  const res = await makeRequest('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': agent.apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-  }, JSON.stringify(body));
-  const data = JSON.parse(res.body);
-  if (res.status !== 200) return { error: data.error?.message || res.body };
-  return { content: data.content?.[0]?.text || '' };
-}
-
-async function streamAnthropic(event, requestId, agent, messages) {
-  const systemMsg = messages.find(m => m.role === 'system');
-  const chatMsgs = messages.filter(m => m.role !== 'system');
-  const reqBody = {
-    model: agent.model || 'claude-sonnet-4-20250514',
-    max_tokens: agent.maxTokens || 16384,
-    messages: chatMsgs,
-    stream: true,
-  };
-  if (systemMsg) reqBody.system = systemMsg.content;
-
-  return new Promise((resolve, reject) => {
-    const req = https.request('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': agent.apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-    }, (res) => {
-      let buffer = '';
-      res.on('data', (chunk) => {
-        buffer += chunk.toString();
-        const lines = buffer.split('\n');
-        buffer = lines.pop();
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.type === 'content_block_delta' && data.delta?.text) {
-                event.sender.send('agent:stream-chunk', requestId, data.delta.text);
-              }
-              if (data.type === 'message_stop') {
-                event.sender.send('agent:stream-done', requestId);
-              }
-            } catch (e) { /* skip */ }
-          }
-        }
-      });
-      res.on('end', () => { event.sender.send('agent:stream-done', requestId); resolve(); });
-    });
-    req.on('error', (err) => { event.sender.send('agent:stream-error', requestId, err.message); reject(err); });
-    req.write(JSON.stringify(reqBody));
-    req.end();
-  });
-}
