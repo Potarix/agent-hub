@@ -453,13 +453,21 @@ async function chatClaudeCode(agent, messages) {
   const args = ['-p', escapedMsg, '--output-format', 'stream-json', '--verbose'];
   if (agent.model) args.push('--model', agent.model);
 
-  // Default to acceptEdits so Claude can edit files without an interactive terminal.
-  // Users can override via agent.permissionMode or agent.claudeArgs.
+  // Permission mode — default to acceptEdits so Claude can edit files without an interactive terminal.
   const permMode = agent.permissionMode || 'acceptEdits';
-  args.push('--permission-mode', permMode);
+  if (permMode === 'bypassPermissions') {
+    args.push('--dangerously-skip-permissions');
+  } else {
+    args.push('--permission-mode', permMode);
+  }
+
+  // Allowed tools — whitelist specific tools (e.g. "Bash(codex:*) Bash(npm:*)")
+  if (agent.allowedTools) {
+    const tools = agent.allowedTools.split(/[,\s]+/).filter(Boolean);
+    if (tools.length) args.push('--allowedTools', ...tools);
+  }
 
   if (agent.claudeArgs) {
-    // Allow custom args like --allowedTools, --permission-mode, etc.
     args.push(...agent.claudeArgs.split(/\s+/).filter(Boolean));
   }
 
@@ -524,7 +532,16 @@ async function streamClaudeCode(event, requestId, agent, messages) {
   if (agent.model) args.push('--model', agent.model);
 
   const permMode = agent.permissionMode || 'acceptEdits';
-  args.push('--permission-mode', permMode);
+  if (permMode === 'bypassPermissions') {
+    args.push('--dangerously-skip-permissions');
+  } else {
+    args.push('--permission-mode', permMode);
+  }
+
+  if (agent.allowedTools) {
+    const tools = agent.allowedTools.split(/[,\s]+/).filter(Boolean);
+    if (tools.length) args.push('--allowedTools', ...tools);
+  }
 
   if (agent.claudeArgs) {
     args.push(...agent.claudeArgs.split(/\s+/).filter(Boolean));
@@ -543,6 +560,7 @@ async function streamClaudeCode(event, requestId, agent, messages) {
 
     let buffer = '';
     let sessionId = null;
+    const pendingToolUses = {};  // tool_use_id -> { tool, input }
 
     proc.stdout.on('data', (data) => {
       buffer += data.toString();
@@ -558,6 +576,13 @@ async function streamClaudeCode(event, requestId, agent, messages) {
                 event.sender.send('agent:stream-thinking', requestId, block.thinking);
               } else if (block.type === 'text' && block.text) {
                 event.sender.send('agent:stream-chunk', requestId, block.text);
+              } else if (block.type === 'tool_use') {
+                pendingToolUses[block.id] = { tool: block.name, input: block.input };
+                event.sender.send('agent:stream-tool-use', requestId, {
+                  id: block.id,
+                  tool: block.name,
+                  input: block.input,
+                });
               }
             }
           }
@@ -570,7 +595,17 @@ async function streamClaudeCode(event, requestId, agent, messages) {
           }
           if (evt.type === 'result') {
             sessionId = evt.session_id || null;
-            // Don't re-send evt.result — it duplicates the already-streamed content_block_delta text
+            // Emit permission denials if any tools were blocked
+            const denials = evt.permission_denials || [];
+            if (denials.length > 0) {
+              // Enrich with tracked tool input data
+              const enriched = denials.map(d => ({
+                tool: d.tool_name || d.tool || 'unknown',
+                input: d.tool_input || pendingToolUses[d.tool_use_id]?.input || {},
+                toolUseId: d.tool_use_id,
+              }));
+              event.sender.send('agent:permission-denied', requestId, enriched);
+            }
           }
         } catch { /* skip non-JSON lines */ }
       }

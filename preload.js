@@ -11,12 +11,20 @@ contextBridge.exposeInMainWorld('agentHub', {
   onStreamDone: (cb) => { const handler = (_e, id, meta) => cb(id, meta); ipcRenderer.on('agent:stream-done', handler); return () => ipcRenderer.removeListener('agent:stream-done', handler); },
   onStreamError: (cb) => { const handler = (_e, id, err) => cb(id, err); ipcRenderer.on('agent:stream-error', handler); return () => ipcRenderer.removeListener('agent:stream-error', handler); },
 
+  // Tool use activity (inline indicators during streaming)
+  onStreamToolUse: (cb) => { const handler = (_e, id, toolInfo) => cb(id, toolInfo); ipcRenderer.on('agent:stream-tool-use', handler); return () => ipcRenderer.removeListener('agent:stream-tool-use', handler); },
+
+  // Permission denial events
+  onPermissionDenied: (cb) => { const handler = (_e, id, denials) => cb(id, denials); ipcRenderer.on('agent:permission-denied', handler); return () => ipcRenderer.removeListener('agent:permission-denied', handler); },
+
   // Remove all stream listeners (legacy, used by App-level cleanup)
   removeStreamListeners: () => {
     ipcRenderer.removeAllListeners('agent:stream-chunk');
     ipcRenderer.removeAllListeners('agent:stream-thinking');
     ipcRenderer.removeAllListeners('agent:stream-done');
     ipcRenderer.removeAllListeners('agent:stream-error');
+    ipcRenderer.removeAllListeners('agent:stream-tool-use');
+    ipcRenderer.removeAllListeners('agent:permission-denied');
   },
 
   // Ping agent

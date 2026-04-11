@@ -482,6 +482,114 @@
     .streaming-indicator span:nth-child(2) { animation-delay: 0.16s; }
     .streaming-indicator span:nth-child(3) { animation-delay: 0.32s; }
 
+    /* Tool use indicators (inline during streaming) */
+    .tool-use-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 10px;
+      margin: 3px 0;
+      background: color-mix(in srgb, var(--accent, #7c6aff) 8%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent, #7c6aff) 18%, transparent);
+      border-radius: 6px;
+      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+      font-size: 11.5px;
+      color: var(--text-1);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .tool-use-indicator .tool-icon {
+      color: var(--accent, #7c6aff);
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+    .tool-use-indicator.denied {
+      background: color-mix(in srgb, #ef4444 10%, transparent);
+      border-color: color-mix(in srgb, #ef4444 25%, transparent);
+    }
+    .tool-use-indicator.denied .tool-icon {
+      color: #ef4444;
+    }
+
+    /* Permission denial banner */
+    .permission-banner {
+      align-self: center;
+      max-width: 85%;
+      background: color-mix(in srgb, #f59e0b 8%, var(--bg-1));
+      border: 1px solid color-mix(in srgb, #f59e0b 25%, transparent);
+      border-radius: 12px;
+      padding: 16px;
+      margin: 8px 0;
+      animation: msgIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .permission-banner-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #f59e0b;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .permission-banner-list {
+      list-style: none;
+      margin: 8px 0;
+      padding: 0;
+    }
+    .permission-banner-list li {
+      font-size: 12px;
+      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+      color: var(--text-1);
+      padding: 6px 8px;
+      margin: 2px 0;
+      background: color-mix(in srgb, #f59e0b 5%, transparent);
+      border-radius: 4px;
+    }
+    .permission-banner-list li strong {
+      color: #f59e0b;
+    }
+    .permission-banner-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+    .permission-banner-actions button {
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      transition: all 0.15s;
+    }
+    .permission-banner-actions .btn-allow {
+      background: var(--accent, #7c6aff);
+      color: #fff;
+      border-color: var(--accent, #7c6aff);
+    }
+    .permission-banner-actions .btn-allow:hover {
+      filter: brightness(1.1);
+    }
+    .permission-banner-actions .btn-always {
+      background: color-mix(in srgb, var(--accent, #7c6aff) 12%, transparent);
+      color: var(--accent, #7c6aff);
+      border-color: color-mix(in srgb, var(--accent, #7c6aff) 25%, transparent);
+    }
+    .permission-banner-actions .btn-always:hover {
+      background: color-mix(in srgb, var(--accent, #7c6aff) 20%, transparent);
+    }
+    .permission-banner-actions .btn-dismiss {
+      background: transparent;
+      color: var(--text-2);
+      border-color: var(--border);
+      margin-left: auto;
+    }
+    .permission-banner-actions .btn-dismiss:hover {
+      color: var(--text-1);
+    }
+
     .chat-input-bar {
       padding: 12px 16px 14px;
       border-top: 1px solid var(--border);
@@ -1205,11 +1313,65 @@
       );
     }
 
+    function ToolUseIndicator({ tool, input, denied }) {
+      let display = tool;
+      if (tool === 'Bash' && input?.command) {
+        display = `$ ${input.command.length > 100 ? input.command.slice(0, 100) + '...' : input.command}`;
+      } else if (tool === 'Write' && input?.file_path) {
+        display = `Write: ${input.file_path}`;
+      } else if (tool === 'Edit' && input?.file_path) {
+        display = `Edit: ${input.file_path}`;
+      } else if (tool === 'Read' && input?.file_path) {
+        display = `Read: ${input.file_path}`;
+      } else if (tool === 'Grep' && input?.pattern) {
+        display = `Grep: ${input.pattern}`;
+      } else if (tool === 'Glob' && input?.pattern) {
+        display = `Glob: ${input.pattern}`;
+      }
+      return (
+        <div className={`tool-use-indicator${denied ? ' denied' : ''}`}>
+          <span className="tool-icon">{denied ? '\u2718' : '\u2699'}</span>
+          <span>{display}</span>
+        </div>
+      );
+    }
+
+    function PermissionBanner({ denials, onAllowRetry, onAlwaysAllow, onDismiss }) {
+      return (
+        <div className="permission-banner">
+          <div className="permission-banner-title">
+            \u26A0 Permission Denied
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-1)', marginBottom: 8 }}>
+            Claude tried to use these tools but they were blocked:
+          </div>
+          <ul className="permission-banner-list">
+            {denials.map((d, i) => (
+              <li key={i}>
+                <strong>{d.tool}</strong>
+                {d.input?.command ? `: ${d.input.command.length > 120 ? d.input.command.slice(0, 120) + '...' : d.input.command}` : ''}
+                {d.input?.file_path && !d.input?.command ? `: ${d.input.file_path}` : ''}
+              </li>
+            ))}
+          </ul>
+          <div className="permission-banner-actions">
+            <button className="btn-allow" onClick={onAllowRetry}>Allow &amp; Retry</button>
+            <button className="btn-always" onClick={onAlwaysAllow}>Always Allow</button>
+            <button className="btn-dismiss" onClick={onDismiss}>Dismiss</button>
+          </div>
+        </div>
+      );
+    }
+
     function ChatView({ agent, status, messages, setMessages, onUpdateAgent }) {
       const [input, setInput] = useState('');
       const [loading, setLoading] = useState(false);
       const [streamText, setStreamText] = useState('');
       const [streamThinking, setStreamThinking] = useState('');
+      const [toolUses, setToolUses] = useState([]);
+      const [permDenials, setPermDenials] = useState(null);
+      const [lastUserMessage, setLastUserMessage] = useState('');
+      const [sessionAllowedTools, setSessionAllowedTools] = useState([]);
       const [slashCommands, setSlashCommands] = useState([]);
       const [showSlash, setShowSlash] = useState(false);
       const [slashIdx, setSlashIdx] = useState(0);
@@ -1218,6 +1380,7 @@
       const inputRef = useRef(null);
       const streamTextRef = useRef('');
       const streamThinkingRef = useRef('');
+      const toolUsesRef = useRef([]);
       const activeRequestIdRef = useRef(null);
       // Keep a ref to the latest agent so stream callbacks never use a stale closure
       const agentRef = useRef(agent);
@@ -1264,9 +1427,11 @@
           }
           streamTextRef.current = '';
           streamThinkingRef.current = '';
+          toolUsesRef.current = [];
           activeRequestIdRef.current = null;
           setStreamText('');
           setStreamThinking('');
+          setToolUses([]);
           setLoading(false);
         });
 
@@ -1275,10 +1440,23 @@
           setMessages(prev => [...prev, { role: 'error', content: err || 'Something went wrong' }]);
           streamTextRef.current = '';
           streamThinkingRef.current = '';
+          toolUsesRef.current = [];
           activeRequestIdRef.current = null;
           setStreamText('');
           setStreamThinking('');
+          setToolUses([]);
           setLoading(false);
+        });
+
+        const offToolUse = window.agentHub.onStreamToolUse((id, toolInfo) => {
+          if (cancelled || id !== activeRequestIdRef.current) return;
+          toolUsesRef.current = [...toolUsesRef.current, toolInfo];
+          setToolUses([...toolUsesRef.current]);
+        });
+
+        const offPermDenied = window.agentHub.onPermissionDenied((id, denials) => {
+          if (cancelled || id !== activeRequestIdRef.current) return;
+          setPermDenials(denials);
         });
 
         return () => {
@@ -1287,6 +1465,8 @@
           offThinking();
           offDone();
           offError();
+          offToolUse();
+          offPermDenied();
         };
       }, [agent.id]);
 
@@ -1362,6 +1542,15 @@
         }
       };
 
+      // Build agent config with session-allowed tools merged in
+      const buildAgentWithSessionTools = (baseAgent, extraTools) => {
+        const all = extraTools || sessionAllowedTools;
+        if (!all.length) return baseAgent;
+        const existing = (baseAgent.allowedTools || '').split(/[,\s]+/).filter(Boolean);
+        const merged = [...new Set([...existing, ...all])].join(' ');
+        return { ...baseAgent, allowedTools: merged };
+      };
+
       const sendMessage = () => {
         const text = input.trim();
         if (!text) return;
@@ -1376,13 +1565,17 @@
         const userMsg = { role: 'user', content: text };
         setMessages(prev => [...prev, userMsg]);
         setInput('');
+        setLastUserMessage(text);
         if (inputRef.current) inputRef.current.style.height = 'auto';
 
         // Reset stream state
         streamTextRef.current = '';
         streamThinkingRef.current = '';
+        toolUsesRef.current = [];
         setStreamText('');
         setStreamThinking('');
+        setToolUses([]);
+        setPermDenials(null);
         setLoading(true);
 
         // Build API messages
@@ -1394,7 +1587,68 @@
         // Generate a unique request ID and start streaming
         const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2);
         activeRequestIdRef.current = requestId;
-        window.agentHub.chatStream(requestId, agent, apiMessages);
+        window.agentHub.chatStream(requestId, buildAgentWithSessionTools(agent), apiMessages);
+      };
+
+      // Permission approval handlers
+      const handleAllowRetry = () => {
+        if (!permDenials || !lastUserMessage) return;
+        const deniedTools = [...new Set(permDenials.map(d => d.tool))];
+        // Add to session-allowed tools (not persisted to agent config)
+        setSessionAllowedTools(prev => [...new Set([...prev, ...deniedTools])]);
+        setPermDenials(null);
+
+        // Reset stream state for retry
+        streamTextRef.current = '';
+        streamThinkingRef.current = '';
+        toolUsesRef.current = [];
+        setStreamText('');
+        setStreamThinking('');
+        setToolUses([]);
+        setLoading(true);
+
+        // Re-build messages and retry
+        const apiMessages = [];
+        if (agent.systemPrompt) apiMessages.push({ role: 'system', content: agent.systemPrompt });
+        apiMessages.push(...(messages || []).slice(-20));
+
+        const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+        activeRequestIdRef.current = requestId;
+        const retryAgent = buildAgentWithSessionTools(agent, [...new Set([...sessionAllowedTools, ...deniedTools])]);
+        window.agentHub.chatStream(requestId, retryAgent, apiMessages);
+      };
+
+      const handleAlwaysAllow = () => {
+        if (!permDenials || !lastUserMessage) return;
+        const deniedTools = [...new Set(permDenials.map(d => d.tool))];
+        // Persist to agent config permanently
+        const existing = (agent.allowedTools || '').split(/[,\s]+/).filter(Boolean);
+        const merged = [...new Set([...existing, ...deniedTools])].join(' ');
+        onUpdateAgent({ ...agent, allowedTools: merged });
+        // Also update session tools and retry
+        setSessionAllowedTools(prev => [...new Set([...prev, ...deniedTools])]);
+        setPermDenials(null);
+
+        streamTextRef.current = '';
+        streamThinkingRef.current = '';
+        toolUsesRef.current = [];
+        setStreamText('');
+        setStreamThinking('');
+        setToolUses([]);
+        setLoading(true);
+
+        const apiMessages = [];
+        if (agent.systemPrompt) apiMessages.push({ role: 'system', content: agent.systemPrompt });
+        apiMessages.push(...(messages || []).slice(-20));
+
+        const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+        activeRequestIdRef.current = requestId;
+        const retryAgent = { ...agent, allowedTools: merged };
+        window.agentHub.chatStream(requestId, retryAgent, apiMessages);
+      };
+
+      const handleDismissDenials = () => {
+        setPermDenials(null);
       };
 
       const onKeyDown = (e) => {
@@ -1483,10 +1737,18 @@
                 )}
               </div>
             ))}
-            {loading && (streamText || streamThinking) && (
+            {loading && (streamText || streamThinking || toolUses.length > 0) && (
               <div className="msg assistant">
                 {showThinking && streamThinking && (
                   <ThinkingBlock thinking={streamThinking} />
+                )}
+                {toolUses.length > 0 && (
+                  <div style={{ marginBottom: streamText ? 6 : 0 }}>
+                    {toolUses.map((tu, i) => {
+                      const isDenied = permDenials?.some(d => d.toolUseId === tu.id);
+                      return <ToolUseIndicator key={tu.id || i} tool={tu.tool} input={tu.input} denied={isDenied} />;
+                    })}
+                  </div>
                 )}
                 {streamText}
                 <span className="streaming-indicator">
@@ -1494,10 +1756,18 @@
                 </span>
               </div>
             )}
-            {loading && !streamText && !streamThinking && (
+            {loading && !streamText && !streamThinking && toolUses.length === 0 && (
               <div className="typing-indicator">
                 <span /><span /><span />
               </div>
+            )}
+            {permDenials && permDenials.length > 0 && !loading && (
+              <PermissionBanner
+                denials={permDenials}
+                onAllowRetry={handleAllowRetry}
+                onAlwaysAllow={handleAlwaysAllow}
+                onDismiss={handleDismissDenials}
+              />
             )}
             <div ref={bottomRef} />
           </div>
@@ -1697,8 +1967,27 @@
                       <input value={form.claudePath || ''} onChange={e => setForm(f => ({ ...f, claudePath: e.target.value }))} placeholder="claude (default, uses PATH)" />
                     </div>
                     <div className="form-row">
+                      <label>Permission Mode</label>
+                      <select value={form.permissionMode || 'acceptEdits'} onChange={e => setForm(f => ({ ...f, permissionMode: e.target.value }))}>
+                        <option value="default">Default (asks for every tool)</option>
+                        <option value="acceptEdits">Accept Edits (auto-approve file edits)</option>
+                        <option value="auto">Auto (AI decides what needs approval)</option>
+                        <option value="bypassPermissions">Bypass Permissions (approve everything)</option>
+                      </select>
+                      <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 4 }}>
+                        Controls which actions Claude can take without approval. Since Agent Hub runs non-interactively, blocked tools will cause errors. Use "Bypass Permissions" or add specific tools below.
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <label>Allowed Tools (optional)</label>
+                      <input value={form.allowedTools || ''} onChange={e => setForm(f => ({ ...f, allowedTools: e.target.value }))} placeholder="e.g. Bash(codex:*) Bash(npm:*) mcp__toolname" />
+                      <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 4 }}>
+                        Comma or space-separated list of tools to always allow (e.g. <code>Bash(codex:*)</code> to allow codex). Only used when Permission Mode is not "Bypass Permissions".
+                      </div>
+                    </div>
+                    <div className="form-row">
                       <label>Extra CLI args (optional)</label>
-                      <input value={form.claudeArgs || ''} onChange={e => setForm(f => ({ ...f, claudeArgs: e.target.value }))} placeholder="e.g. --permission-mode full --verbose" />
+                      <input value={form.claudeArgs || ''} onChange={e => setForm(f => ({ ...f, claudeArgs: e.target.value }))} placeholder="e.g. --verbose" />
                     </div>
                     <div className="form-row">
                       <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
