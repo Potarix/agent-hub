@@ -6,12 +6,12 @@ contextBridge.exposeInMainWorld('agentHub', {
 
   // Streaming chat
   chatStream: (requestId, agent, messages) => ipcRenderer.send('agent:chat-stream', requestId, agent, messages),
-  onStreamChunk: (cb) => ipcRenderer.on('agent:stream-chunk', (_e, id, text) => cb(id, text)),
-  onStreamThinking: (cb) => ipcRenderer.on('agent:stream-thinking', (_e, id, text) => cb(id, text)),
-  onStreamDone: (cb) => ipcRenderer.on('agent:stream-done', (_e, id, meta) => cb(id, meta)),
-  onStreamError: (cb) => ipcRenderer.on('agent:stream-error', (_e, id, err) => cb(id, err)),
+  onStreamChunk: (cb) => { const handler = (_e, id, text) => cb(id, text); ipcRenderer.on('agent:stream-chunk', handler); return () => ipcRenderer.removeListener('agent:stream-chunk', handler); },
+  onStreamThinking: (cb) => { const handler = (_e, id, text) => cb(id, text); ipcRenderer.on('agent:stream-thinking', handler); return () => ipcRenderer.removeListener('agent:stream-thinking', handler); },
+  onStreamDone: (cb) => { const handler = (_e, id, meta) => cb(id, meta); ipcRenderer.on('agent:stream-done', handler); return () => ipcRenderer.removeListener('agent:stream-done', handler); },
+  onStreamError: (cb) => { const handler = (_e, id, err) => cb(id, err); ipcRenderer.on('agent:stream-error', handler); return () => ipcRenderer.removeListener('agent:stream-error', handler); },
 
-  // Remove stream listeners
+  // Remove all stream listeners (legacy, used by App-level cleanup)
   removeStreamListeners: () => {
     ipcRenderer.removeAllListeners('agent:stream-chunk');
     ipcRenderer.removeAllListeners('agent:stream-thinking');

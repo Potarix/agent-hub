@@ -1072,18 +1072,20 @@
               onOpenSettings={() => setShowSettings(true)}
             />
             <div className="main-area">
-              {activeAgent ? (
-                <ChatView
-                  key={activeAgent.id}
-                  agent={activeAgent}
-                  status={statuses[activeAgent.id]}
-                  messages={chats[activeAgent.id] || []}
-                  setMessages={(msgs) => setChats(prev => ({ ...prev, [activeAgent.id]: typeof msgs === 'function' ? msgs(prev[activeAgent.id] || []) : msgs }))}
-                  onUpdateAgent={updateAgent}
-                />
-              ) : (
+              {!activeAgent && (
                 <Dashboard agents={agents} statuses={statuses} onlineCount={onlineCount} />
               )}
+              {agents.map(ag => (
+                <div key={ag.id} style={{ display: activeId === ag.id ? 'contents' : 'none' }}>
+                  <ChatView
+                    agent={ag}
+                    status={statuses[ag.id]}
+                    messages={chats[ag.id] || []}
+                    setMessages={(msgs) => setChats(prev => ({ ...prev, [ag.id]: typeof msgs === 'function' ? msgs(prev[ag.id] || []) : msgs }))}
+                    onUpdateAgent={updateAgent}
+                  />
+                </div>
+              ))}
             </div>
           </div>
 
@@ -1213,26 +1215,24 @@
         inputRef.current?.focus();
       }, [agent.id]);
 
-      // Set up stream listeners — only depends on agent.id (key= already
-      // forces a full remount on agent switch, so this runs once per agent)
+      // Set up stream listeners — each ChatView stays mounted, so listeners
+      // persist across agent switches. Each callback filters by its own requestId.
       useEffect(() => {
         let cancelled = false;
 
-        window.agentHub.removeStreamListeners();
-
-        window.agentHub.onStreamChunk((id, text) => {
+        const offChunk = window.agentHub.onStreamChunk((id, text) => {
           if (cancelled || id !== activeRequestIdRef.current) return;
           streamTextRef.current += text;
           setStreamText(streamTextRef.current);
         });
 
-        window.agentHub.onStreamThinking((id, text) => {
+        const offThinking = window.agentHub.onStreamThinking((id, text) => {
           if (cancelled || id !== activeRequestIdRef.current) return;
           streamThinkingRef.current += text;
           setStreamThinking(streamThinkingRef.current);
         });
 
-        window.agentHub.onStreamDone((id, meta) => {
+        const offDone = window.agentHub.onStreamDone((id, meta) => {
           if (cancelled || id !== activeRequestIdRef.current) return;
           const content = streamTextRef.current;
           const thinking = streamThinkingRef.current || null;
@@ -1254,7 +1254,7 @@
           setLoading(false);
         });
 
-        window.agentHub.onStreamError((id, err) => {
+        const offError = window.agentHub.onStreamError((id, err) => {
           if (cancelled || id !== activeRequestIdRef.current) return;
           setMessages(prev => [...prev, { role: 'error', content: err || 'Something went wrong' }]);
           streamTextRef.current = '';
@@ -1266,13 +1266,11 @@
         });
 
         return () => {
-          // Mark all callbacks from this effect as dead
           cancelled = true;
-          // Discard any in-flight stream state so it doesn't leak into the next agent
-          activeRequestIdRef.current = null;
-          streamTextRef.current = '';
-          streamThinkingRef.current = '';
-          window.agentHub.removeStreamListeners();
+          offChunk();
+          offThinking();
+          offDone();
+          offError();
         };
       }, [agent.id]);
 
