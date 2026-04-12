@@ -78,7 +78,14 @@ async function chatClaudeCode(agent, messages) {
 
   try {
     const { query } = await getClaudeSDK();
-    const options = buildClaudeSDKOptions(agent);
+
+    // For non-streaming mode, we'll auto-approve to maintain backward compatibility
+    // Users who need approval should use streaming mode
+    const options = buildClaudeSDKOptions(agent, {
+      permissionHandler: async () => ({
+        behavior: 'allow'
+      })
+    });
 
     let content = '';
     let thinking = null;
@@ -146,6 +153,22 @@ async function streamClaudeCode(event, requestId, agent, messages) {
       signal: abortController.signal,
       // Enable partial messages so we get real-time text deltas
       includePartialMessages: true,
+      // Add permission handler to forward requests to frontend
+      permissionHandler: async (request) => {
+        return new Promise((resolve) => {
+          const toolUseId = request.tool_use_id || request.id || Math.random().toString(36);
+          pendingPermissions.set(toolUseId, resolve);
+
+          // Send permission request to frontend
+          event.sender.send('agent:permission-request', requestId, {
+            toolUseId,
+            tool: request.tool_name || request.tool,
+            input: request.input,
+            description: request.description,
+            timestamp: Date.now()
+          });
+        });
+      }
     });
 
     let sessionId = null;
