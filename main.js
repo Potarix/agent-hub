@@ -377,10 +377,61 @@ async function pingHermes(agent) {
   }
 }
 
-// ── Provider: Claude Code (local CLI) ──
+// ── Provider: Claude Code (via @anthropic-ai/claude-code SDK) ──
+// Uses the official @anthropic-ai/claude-code SDK instead of spawning the CLI.
+// This inherits the same OAuth tokens from `claude auth login` — no API key needed.
+let _claudeSDK = null;
+async function getClaudeSDK() {
+  if (!_claudeSDK) {
+    try {
+      _claudeSDK = await import('@anthropic-ai/claude-code');
+    } catch {
+      throw new Error(
+        'Claude Code SDK not installed. Run: npm install @anthropic-ai/claude-code'
+      );
+    }
+  }
+  return _claudeSDK;
+}
 
-// Track persistent Claude Code sessions (kept alive between messages)
-const claudeCodeSessions = {};
+// Build SDK options from the agent config object
+function buildClaudeSDKOptions(agent, extraOpts = {}) {
+  const options = {
+    cwd: agent.workDir || process.env.HOME,
+    ...extraOpts,
+  };
+
+  if (agent.model) options.model = agent.model;
+
+  // Permission mode
+  const permMode = agent.permissionMode || 'acceptEdits';
+  if (permMode === 'bypassPermissions') {
+    options.dangerouslySkipPermissions = true;
+  } else {
+    options.permissionMode = permMode;
+  }
+
+  // Allowed tools whitelist
+  if (agent.allowedTools) {
+    options.allowedTools = agent.allowedTools
+      .split(/[,\s]+/)
+      .filter(Boolean);
+  }
+
+  // Session continuation
+  if (agent.sessionId) {
+    options.resume = agent.sessionId;
+  } else if (agent.continueSession) {
+    options.continue = true;
+  }
+
+  // System prompt override
+  if (agent.systemPrompt) {
+    options.systemPrompt = agent.systemPrompt;
+  }
+
+  return options;
+}
 
 // Get a full login-shell environment so spawned processes find CLI tools and auth tokens
 let _loginEnv = null;
@@ -472,70 +523,35 @@ async function chatClaudeCode(agent, messages) {
   const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
   if (!lastUserMsg) return { error: 'No user message found' };
 
-  const claudePath = agent.claudePath || 'claude';
-  const workDir = agent.workDir || process.env.HOME;
-  const escapedMsg = lastUserMsg.content;
-
-  // Always use stream-json + verbose so we can capture thinking blocks
-  const args = ['-p', escapedMsg, '--output-format', 'stream-json', '--verbose'];
-  if (agent.model) args.push('--model', agent.model);
-
-  // Permission mode — default to acceptEdits so Claude can edit files without an interactive terminal.
-  const permMode = agent.permissionMode || 'acceptEdits';
-  if (permMode === 'bypassPermissions') {
-    args.push('--dangerously-skip-permissions');
-  } else {
-    args.push('--permission-mode', permMode);
-  }
-
-  // Allowed tools — whitelist specific tools (e.g. "Bash(codex:*) Bash(npm:*)")
-  if (agent.allowedTools) {
-    const tools = agent.allowedTools.split(/[,\s]+/).filter(Boolean);
-    if (tools.length) args.push('--allowedTools', ...tools);
-  }
-
-  if (agent.claudeArgs) {
-    args.push(...agent.claudeArgs.split(/\s+/).filter(Boolean));
-  }
-
-  // If a session ID is stored, continue it for conversation context
-  if (agent.sessionId) {
-    args.push('--continue', agent.sessionId);
-  } else if (agent.continueSession) {
-    args.push('--continue');
-  }
-
   try {
-    const output = await runLocalCommand(claudePath, args, {
-      cwd: workDir,
-      timeout: agent.timeout || 300000,
-    });
+    const { query } = await getClaudeSDK();
+    const options = buildClaudeSDKOptions(agent);
 
-    let content, sessionId, thinking = null;
+    let content = '';
+    let thinking = null;
+    let sessionId = null;
 
-    // Parse stream-json: multiple JSON lines — extract thinking, result, and session_id
-    const lines = output.split('\n').filter(l => l.trim());
-    for (const line of lines) {
-      try {
-        const evt = JSON.parse(line);
-        if (evt.type === 'assistant' && evt.message?.content) {
-          for (const block of evt.message.content) {
-            if (block.type === 'thinking' && block.thinking) {
-              thinking = (thinking || '') + block.thinking;
-            }
-          }
+    for await (const message of query({ prompt: lastUserMsg.content, options })) {
+      // Init message — contains session_id
+      if (message.type === 'system' && message.subtype === 'init') {
+        sessionId = message.session_id;
+      }
+
+      // Complete assistant messages
+      if (message.type === 'assistant' && message.message?.content) {
+        for (const block of message.message.content) {
+          if (block.type === 'text') content += block.text || '';
+          if (block.type === 'thinking') thinking = (thinking || '') + (block.thinking || '');
         }
-        if (evt.type === 'result') {
-          content = evt.result || '';
-          sessionId = evt.session_id || null;
-        }
-      } catch { /* skip non-JSON lines */ }
-    }
-    if (!content) content = extractClaudeCodeResponse(output);
+      }
 
-    if (content.includes('401') || content.includes('authentication_error') || content.includes('Failed to authenticate')) {
-      return { error: 'Claude Code is not authenticated. Click Login below to sign in.' };
+      // Result message — final answer + session_id
+      if (message.type === 'result') {
+        sessionId = message.session_id || sessionId;
+        if (message.result) content = message.result;
+      }
     }
+
     return { content, sessionId, thinking };
   } catch (err) {
     const msg = err.message || '';
@@ -553,138 +569,107 @@ async function streamClaudeCode(event, requestId, agent, messages) {
     return;
   }
 
-  const claudePath = agent.claudePath || 'claude';
-  const workDir = agent.workDir || process.env.HOME;
-  const args = ['-p', lastUserMsg.content, '--output-format', 'stream-json', '--verbose'];
-  if (agent.model) args.push('--model', agent.model);
+  try {
+    const { query } = await getClaudeSDK();
 
-  const permMode = agent.permissionMode || 'acceptEdits';
-  if (permMode === 'bypassPermissions') {
-    args.push('--dangerously-skip-permissions');
-  } else {
-    args.push('--permission-mode', permMode);
-  }
+    const abortController = new AbortController();
+    const pendingPermissions = new Map(); // toolUseId -> resolve callback
 
-  if (agent.allowedTools) {
-    const tools = agent.allowedTools.split(/[,\s]+/).filter(Boolean);
-    if (tools.length) args.push('--allowedTools', ...tools);
-  }
-
-  if (agent.claudeArgs) {
-    args.push(...agent.claudeArgs.split(/\s+/).filter(Boolean));
-  }
-  if (agent.sessionId) {
-    args.push('--continue', agent.sessionId);
-  } else if (agent.continueSession) {
-    args.push('--continue');
-  }
-
-  return new Promise((resolve, reject) => {
-    const proc = spawn(claudePath, args, {
-      env: { ...getLoginEnv() },
-      cwd: workDir,
+    // Store handles so the IPC permission-response handler and abort can reach us
+    activeClaudeProcs.set(requestId, {
+      abort: () => abortController.abort(),
+      resolvePermission: (toolUseId, decision) => {
+        const resolver = pendingPermissions.get(toolUseId);
+        if (resolver) {
+          resolver(decision);
+          pendingPermissions.delete(toolUseId);
+        }
+      },
     });
 
-    // Store process reference so we can write permission responses to stdin
-    activeClaudeProcs.set(requestId, proc);
+    const options = buildClaudeSDKOptions(agent, {
+      signal: abortController.signal,
+      // Enable partial messages so we get real-time text deltas
+      includePartialMessages: true,
+    });
 
-    let buffer = '';
     let sessionId = null;
-    const pendingToolUses = {};  // tool_use_id -> { tool, input }
+    const seenTextBlocks = new Set(); // track blocks we've already streamed via deltas
 
-    proc.stdout.on('data', (data) => {
-      buffer += data.toString();
-      const lines = buffer.split('\n');
-      buffer = lines.pop(); // keep incomplete last line in buffer
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const evt = JSON.parse(line);
-          if (evt.type === 'assistant' && evt.message?.content) {
-            for (const block of evt.message.content) {
-              if (block.type === 'thinking' && block.thinking) {
-                event.sender.send('agent:stream-thinking', requestId, block.thinking);
-              } else if (block.type === 'text' && block.text) {
-                event.sender.send('agent:stream-chunk', requestId, block.text);
-              } else if (block.type === 'tool_use') {
-                pendingToolUses[block.id] = { tool: block.name, input: block.input };
-                event.sender.send('agent:stream-tool-use', requestId, {
-                  id: block.id,
-                  tool: block.name,
-                  input: block.input,
-                });
-              }
-            }
+    for await (const message of query({ prompt: lastUserMsg.content, options })) {
+
+      // ── System init — session ID + available slash commands ──
+      if (message.type === 'system' && message.subtype === 'init') {
+        sessionId = message.session_id;
+        continue;
+      }
+
+      // ── Partial streaming events (real-time token-by-token deltas) ──
+      if (message.type === 'stream_event' && message.event) {
+        const evt = message.event;
+        if (evt.type === 'content_block_delta') {
+          if (evt.delta?.type === 'text_delta' && evt.delta.text) {
+            event.sender.send('agent:stream-chunk', requestId, evt.delta.text);
           }
-          if (evt.type === 'content_block_delta') {
-            if (evt.delta?.type === 'text_delta' && evt.delta.text) {
-              event.sender.send('agent:stream-chunk', requestId, evt.delta.text);
-            } else if (evt.delta?.type === 'thinking_delta' && evt.delta.thinking) {
-              event.sender.send('agent:stream-thinking', requestId, evt.delta.thinking);
-            }
+          if (evt.delta?.type === 'thinking_delta' && evt.delta.thinking) {
+            event.sender.send('agent:stream-thinking', requestId, evt.delta.thinking);
           }
-          // Handle real-time permission requests from Claude Code subprocess
-          if (evt.type === 'system' && evt.subtype === 'permission_request') {
-            event.sender.send('agent:permission-request', requestId, {
-              toolUseId: evt.tool_use_id || evt.uuid,
-              tool: evt.tool_name || 'unknown',
-              input: evt.tool_input || {},
-              suggestions: evt.permission_suggestions || [],
+          if (evt.delta?.type === 'input_json_delta' && evt.delta.partial_json) {
+            // Tool input streaming — could surface later if needed
+          }
+        }
+        // Mark content blocks streamed via deltas so we skip them in complete messages
+        if (evt.type === 'content_block_start' && evt.index != null) {
+          seenTextBlocks.add(evt.index);
+        }
+        continue;
+      }
+
+      // ── Complete assistant messages (tool_use blocks arrive here) ──
+      if (message.type === 'assistant' && message.message?.content) {
+        for (let i = 0; i < message.message.content.length; i++) {
+          const block = message.message.content[i];
+
+          // Tool use — always emit (these aren't streamed token-by-token)
+          if (block.type === 'tool_use') {
+            event.sender.send('agent:stream-tool-use', requestId, {
+              id: block.id,
+              tool: block.name,
+              input: block.input,
             });
           }
-          if (evt.type === 'result') {
-            sessionId = evt.session_id || null;
-            // Emit permission denials if any tools were blocked
-            const denials = evt.permission_denials || [];
-            if (denials.length > 0) {
-              // Enrich with tracked tool input data
-              const enriched = denials.map(d => ({
-                tool: d.tool_name || d.tool || 'unknown',
-                input: d.tool_input || pendingToolUses[d.tool_use_id]?.input || {},
-                toolUseId: d.tool_use_id,
-              }));
-              event.sender.send('agent:permission-denied', requestId, enriched);
+
+          // Text/thinking that wasn't already sent via deltas (fallback)
+          if (!seenTextBlocks.has(i)) {
+            if (block.type === 'text' && block.text) {
+              event.sender.send('agent:stream-chunk', requestId, block.text);
+            }
+            if (block.type === 'thinking' && block.thinking) {
+              event.sender.send('agent:stream-thinking', requestId, block.thinking);
             }
           }
-        } catch { /* skip non-JSON lines */ }
+        }
+        seenTextBlocks.clear();
       }
-    });
 
-    proc.stderr.on('data', () => { /* ignore stderr */ });
+      // ── Result ──
+      if (message.type === 'result') {
+        sessionId = message.session_id || sessionId;
+      }
+    }
 
-    const timeout = agent.timeout || 300000;
-    let timer = setTimeout(() => {
-      proc.kill();
-      activeClaudeProcs.delete(requestId);
-      event.sender.send('agent:stream-error', requestId, 'Command timeout');
-      reject(new Error('Command timeout'));
-    }, timeout);
-    const resetTimer = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        proc.kill();
-        activeClaudeProcs.delete(requestId);
-        event.sender.send('agent:stream-error', requestId, 'Command timeout');
-        reject(new Error('Command timeout'));
-      }, timeout);
-    };
+    activeClaudeProcs.delete(requestId);
+    event.sender.send('agent:stream-done', requestId, { sessionId });
 
-    proc.stdout.on('data', resetTimer);
-
-    proc.on('close', () => {
-      clearTimeout(timer);
-      activeClaudeProcs.delete(requestId);
-      event.sender.send('agent:stream-done', requestId, { sessionId });
-      resolve();
-    });
-
-    proc.on('error', (err) => {
-      clearTimeout(timer);
-      activeClaudeProcs.delete(requestId);
-      event.sender.send('agent:stream-error', requestId, err.message);
-      reject(err);
-    });
-  });
+  } catch (err) {
+    activeClaudeProcs.delete(requestId);
+    const msg = err.message || '';
+    if (msg.includes('401') || msg.includes('authentication_error') || msg.includes('Failed to authenticate')) {
+      event.sender.send('agent:stream-error', requestId, 'Claude Code is not authenticated. Click Login below to sign in.');
+    } else {
+      event.sender.send('agent:stream-error', requestId, msg);
+    }
+  }
 }
 
 async function streamCodexLocal(event, requestId, agent, messages) {
@@ -1139,8 +1124,9 @@ const LOCAL_COMMANDS = {
 // How to discover and execute commands for each provider
 const PROVIDER_CONFIG = {
   'claude-code': {
-    discoverCmd: (agent) => ({ cli: 'claude', args: ['-p', '/help'], cwd: agent.workDir || process.env.HOME }),
-    execCmd: (agent, slashCmd, arg) => ({ cli: 'claude', args: ['-p', `${slashCmd}${arg ? ' ' + arg : ''}`], cwd: agent.workDir || process.env.HOME }),
+    // Use the SDK to execute slash commands — they're just prompts starting with /
+    discoverCmd: (agent) => ({ sdk: true, prompt: '/help', cwd: agent.workDir || process.env.HOME }),
+    execCmd: (agent, slashCmd, arg) => ({ sdk: true, prompt: `${slashCmd}${arg ? ' ' + arg : ''}`, cwd: agent.workDir || process.env.HOME }),
     parseHelp: (output) => {
       // Parse Claude Code /help output: lines like "/command  description" or "/command - description"
       const cmds = [];
@@ -1256,7 +1242,23 @@ async function discoverCommands(agent) {
       const spec = config.discoverCmd(agent);
       let output = '';
 
-      if (spec.cli) {
+      if (spec.sdk) {
+        // Use the Claude Code SDK to run the slash command
+        try {
+          const { query } = await getClaudeSDK();
+          const opts = buildClaudeSDKOptions(agent);
+          for await (const msg of query({ prompt: spec.prompt, options: opts })) {
+            if (msg.type === 'result' && msg.result) output += msg.result;
+            else if (msg.type === 'assistant' && msg.message?.content) {
+              for (const b of msg.message.content) {
+                if (b.type === 'text') output += b.text || '';
+              }
+            }
+          }
+        } catch (e) {
+          console.error('SDK slash command failed:', e.message);
+        }
+      } else if (spec.cli) {
         output = await runLocalCommand(spec.cli, spec.args, { cwd: spec.cwd || process.env.HOME, timeout: 15000 });
       } else if (spec.ssh) {
         output = await runSSHCommand(spec.agent || agent, spec.command, 15000);
@@ -1335,6 +1337,28 @@ ipcMain.handle('agent:exec-slash', async (_event, agent, command) => {
       return { error: `Unknown command: ${slashCmd}. Type / to see available commands.` };
     }
 
+    // SDK command (Claude Code slash commands via the SDK)
+    if (spec.sdk) {
+      const { query } = await getClaudeSDK();
+      const opts = buildClaudeSDKOptions(agent);
+      let content = '';
+      let sessionId = null;
+      for await (const msg of query({ prompt: spec.prompt, options: opts })) {
+        if (msg.type === 'system' && msg.subtype === 'init') {
+          sessionId = msg.session_id;
+        }
+        if (msg.type === 'result' && msg.result) content = msg.result;
+        else if (msg.type === 'assistant' && msg.message?.content) {
+          for (const b of msg.message.content) {
+            if (b.type === 'text') content += b.text || '';
+          }
+        }
+      }
+      // Trigger discovery after running a command
+      discoverCommands(agent).catch(() => {});
+      return { content: content.trim(), sessionId };
+    }
+
     // SSH command
     if (spec.ssh) {
       const output = await runSSHCommand(spec.agent || agent, spec.command, 30000);
@@ -1347,10 +1371,9 @@ ipcMain.handle('agent:exec-slash', async (_event, agent, command) => {
       return { content: output.trim() };
     }
 
-    // CLI command (claude code)
+    // Legacy CLI command (non-Claude-Code providers)
     if (spec.cli) {
       const output = await runLocalCommand(spec.cli, spec.args, { cwd: spec.cwd || process.env.HOME, timeout: 30000 });
-      // Trigger discovery after running a command (to pick up new commands from help)
       discoverCommands(agent).catch(() => {});
       return { content: extractClaudeCodeResponse(output) };
     }
@@ -1421,18 +1444,29 @@ ipcMain.on('agent:chat-stream', async (event, requestId, agent, messages) => {
   }
 });
 
-// Handle permission responses from the renderer — writes approval/denial to Claude's stdin
+// Handle permission responses from the renderer
+// Works with both SDK (resolvePermission callback) and legacy CLI (stdin write)
 ipcMain.on('agent:permission-response', (_event, requestId, toolUseId, decision) => {
-  const proc = activeClaudeProcs.get(requestId);
-  if (!proc || proc.killed) return;
-  try {
-    const response = JSON.stringify({
-      type: 'tool_permission_response',
-      tool_use_id: toolUseId,
-      decision,
-    });
-    proc.stdin.write(response + '\n');
-  } catch { /* process may have exited */ }
+  const handle = activeClaudeProcs.get(requestId);
+  if (!handle) return;
+
+  // SDK path — resolve the pending permission promise
+  if (handle.resolvePermission) {
+    handle.resolvePermission(toolUseId, decision);
+    return;
+  }
+
+  // Legacy CLI path (for non-Claude-Code providers that may still use stdin)
+  if (handle.stdin && !handle.killed) {
+    try {
+      const response = JSON.stringify({
+        type: 'tool_permission_response',
+        tool_use_id: toolUseId,
+        decision,
+      });
+      handle.stdin.write(response + '\n');
+    } catch { /* process may have exited */ }
+  }
 });
 
 ipcMain.handle('agent:ping', async (_event, agent) => {

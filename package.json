@@ -9,6 +9,7 @@
     "dev": "electron . --dev"
   },
   "dependencies": {
+    "@anthropic-ai/claude-code": "^1.0.128",
     "electron": "^32.0.0"
   },
   "author": "Omar Dadabhoy",
