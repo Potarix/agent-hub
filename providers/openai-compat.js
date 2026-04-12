@@ -1,12 +1,47 @@
 const { makeRequest, makeStreamRequest } = require('../lib/http');
 
+// Transform messages to handle image content
+function transformMessagesForAPI(messages) {
+  return messages.map(msg => {
+    if (msg.images && msg.images.length > 0) {
+      // For messages with images, use the multi-part content format
+      const content = [
+        { type: 'text', text: msg.content || '' }
+      ];
+
+      msg.images.forEach(img => {
+        if (img.base64) {
+          content.push({
+            type: 'image_url',
+            image_url: {
+              url: `data:${img.mimeType || 'image/jpeg'};base64,${img.base64}`
+            }
+          });
+        } else if (img.url) {
+          content.push({
+            type: 'image_url',
+            image_url: { url: img.url }
+          });
+        }
+      });
+
+      return { ...msg, content, images: undefined };
+    }
+    return msg;
+  });
+}
+
 async function chatOpenAI(agent, messages) {
   const url = `${agent.baseUrl}/v1/chat/completions`;
   const headers = { 'Content-Type': 'application/json' };
   if (agent.apiKey) headers['Authorization'] = `Bearer ${agent.apiKey}`;
+
+  // Transform messages to handle images
+  const transformedMessages = transformMessagesForAPI(messages);
+
   const body = JSON.stringify({
     model: agent.model || 'gpt-4',
-    messages,
+    messages: transformedMessages,
     max_tokens: agent.maxTokens || 16384,
     temperature: agent.temperature ?? 0.7,
   });
@@ -24,9 +59,13 @@ async function streamOpenAI(event, requestId, agent, messages) {
   const url = `${agent.baseUrl}/v1/chat/completions`;
   const headers = { 'Content-Type': 'application/json' };
   if (agent.apiKey) headers['Authorization'] = `Bearer ${agent.apiKey}`;
+
+  // Transform messages to handle images
+  const transformedMessages = transformMessagesForAPI(messages);
+
   const body = JSON.stringify({
     model: agent.model || 'gpt-4',
-    messages,
+    messages: transformedMessages,
     max_tokens: agent.maxTokens || 16384,
     temperature: agent.temperature ?? 0.7,
     stream: true,
