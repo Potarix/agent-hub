@@ -679,7 +679,81 @@ async function streamCodexLocal(event, requestId, agent, messages) {
     return;
   }
 
-  // Prefer SDK if API key is available
+  // Check if codex has ChatGPT auth
+  const fs = require('fs');
+  const homeDir = require('os').homedir();
+  const codexAuthPath = path.join(homeDir, '.codex', 'auth.json');
+  let hasCodexAuth = false;
+  try {
+    if (fs.existsSync(codexAuthPath)) {
+      const authData = JSON.parse(fs.readFileSync(codexAuthPath, 'utf8'));
+      hasCodexAuth = authData.auth_mode === 'chatgpt' && authData.tokens && authData.tokens.id_token;
+    }
+  } catch (e) {
+    // Auth file might be corrupted or inaccessible
+  }
+
+  // If we have ChatGPT auth, use the codex CLI
+  if (hasCodexAuth) {
+    const codexPath = agent.codexPath || 'codex';
+    const workDir = agent.workDir || process.env.HOME;
+
+    return new Promise((resolve, reject) => {
+      const args = buildCodexExecArgs(agent, { stdinPrompt: true });
+
+      // Use Codex's non-interactive entrypoint; the default TUI requires a TTY.
+      const proc = spawn(codexPath, args, {
+        env: { ...getLoginEnv() },
+        cwd: workDir,
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+
+      // Send the message via stdin
+      proc.stdin.write(lastUserMsg.content);
+      proc.stdin.end();
+
+      let buffer = '';
+      let stderrBuf = '';
+      let sentAnyContent = false;
+
+      proc.stdout.on('data', (data) => {
+        const text = data.toString();
+        // Send raw output as it comes
+        event.sender.send('agent:stream-chunk', requestId, text);
+        sentAnyContent = true;
+      });
+
+      proc.stderr.on('data', (data) => {
+        stderrBuf += data.toString();
+      });
+
+      const timeout = agent.timeout || 300000;
+      let timer = setTimeout(() => {
+        proc.kill();
+        event.sender.send('agent:stream-error', requestId, 'Command timeout');
+        resolve();
+      }, timeout);
+
+      proc.on('close', (code) => {
+        clearTimeout(timer);
+        if (!sentAnyContent && code !== 0 && stderrBuf.trim()) {
+          const errMsg = stderrBuf.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').trim();
+          event.sender.send('agent:stream-error', requestId, errMsg || `Codex exited with code ${code}`);
+        } else {
+          event.sender.send('agent:stream-done', requestId, {});
+        }
+        resolve();
+      });
+
+      proc.on('error', (err) => {
+        clearTimeout(timer);
+        event.sender.send('agent:stream-error', requestId, err.message);
+        resolve();
+      });
+    });
+  }
+
+  // Prefer SDK if API key is available and no ChatGPT auth
   const apiKey = agent.apiKey || process.env.OPENAI_API_KEY;
   if (apiKey && agent.useSDK !== false) {
     try {
@@ -739,87 +813,19 @@ async function streamCodexLocal(event, requestId, agent, messages) {
     }
   }
 
-  // Fallback to CLI if no API key or SDK disabled
-  const codexPath = agent.codexPath || 'codex';
-  const workDir = agent.workDir || process.env.HOME;
-  const args = [lastUserMsg.content, '--full-auto'];
-  if (agent.model) args.push('--model', agent.model);
-  if (agent.codexArgs) {
-    args.push(...agent.codexArgs.split(/\s+/).filter(Boolean));
-  }
-
-  return new Promise((resolve, reject) => {
-    const proc = spawn(codexPath, args, {
-      env: { ...getLoginEnv() },
-      cwd: workDir,
-    });
-
-    let buffer = '';
-    let stderrBuf = '';
-    let sentAnyContent = false;
-
-    proc.stdout.on('data', (data) => {
-      buffer += data.toString();
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const evt = JSON.parse(line);
-          if (evt.type === 'message' && evt.message?.content) {
-            for (const block of (Array.isArray(evt.message.content) ? evt.message.content : [])) {
-              if (block.type === 'output_text' || block.type === 'text') {
-                if (block.text) { event.sender.send('agent:stream-chunk', requestId, block.text); sentAnyContent = true; }
-              } else if (block.type === 'reasoning' || block.type === 'thinking') {
-                const t = block.text || block.thinking || '';
-                if (t) event.sender.send('agent:stream-thinking', requestId, t);
-              }
-            }
-          }
-          if (evt.type === 'text' || evt.type === 'output_text') {
-            if (evt.text) { event.sender.send('agent:stream-chunk', requestId, evt.text); sentAnyContent = true; }
-          }
-        } catch { /* skip non-JSON lines */ }
-      }
-    });
-
-    proc.stderr.on('data', (data) => { stderrBuf += data.toString(); });
-
-    const timeout = agent.timeout || 300000;
-    let timer = setTimeout(() => {
-      proc.kill();
-      event.sender.send('agent:stream-error', requestId, 'Command timeout');
-      reject(new Error('Command timeout'));
-    }, timeout);
-    const resetTimer = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        proc.kill();
-        event.sender.send('agent:stream-error', requestId, 'Command timeout');
-        reject(new Error('Command timeout'));
-      }, timeout);
-    };
-
-    proc.stdout.on('data', resetTimer);
-    proc.stderr.on('data', resetTimer);
-
-    proc.on('close', (code) => {
-      clearTimeout(timer);
-      if (!sentAnyContent && code !== 0 && stderrBuf.trim()) {
-        const errMsg = stderrBuf.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').trim();
-        event.sender.send('agent:stream-error', requestId, errMsg || `Codex exited with code ${code}`);
-      } else {
-        event.sender.send('agent:stream-done', requestId, {});
-      }
-      resolve();
-    });
-
-    proc.on('error', (err) => {
-      clearTimeout(timer);
-      event.sender.send('agent:stream-error', requestId, err.message);
-      reject(err);
-    });
-  });
+  // Fallback - need either ChatGPT auth or API key
+  event.sender.send('agent:stream-error', requestId,
+    'Codex requires authentication. You have two options:\n\n' +
+    'Option 1: Login with ChatGPT (recommended):\n' +
+    '   Run: codex auth\n' +
+    '   This will open a browser to login with your ChatGPT account\n\n' +
+    'Option 2: Use an OpenAI API key:\n' +
+    '   • Add an API key to your agent configuration, or\n' +
+    '   • Set OPENAI_API_KEY environment variable:\n' +
+    '     export OPENAI_API_KEY=your-key-here\n\n' +
+    'Get your API key from: https://platform.openai.com/api-keys'
+  );
+  return;
 }
 
 async function pingClaudeCode(agent) {
@@ -1091,11 +1097,88 @@ function extractCodexResponse(output) {
   return cleaned || output.trim();
 }
 
+function buildCodexExecArgs(agent, { stdinPrompt = false } = {}) {
+  const args = ['exec', '--full-auto', '--color', 'never'];
+  if (agent.skipGitRepoCheck !== false) args.push('--skip-git-repo-check');
+  if (agent.model) args.push('--model', agent.model);
+  if (agent.codexArgs) args.push(...agent.codexArgs.split(/\s+/).filter(Boolean));
+  if (stdinPrompt) args.push('-');
+  return args;
+}
+
 async function chatCodexLocal(agent, messages) {
   const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
   if (!lastUserMsg) return { error: 'No user message found' };
 
-  // Prefer SDK if API key is available
+  // Check if codex has ChatGPT auth
+  const fs = require('fs');
+  const homeDir = require('os').homedir();
+  const codexAuthPath = path.join(homeDir, '.codex', 'auth.json');
+  let hasCodexAuth = false;
+  try {
+    if (fs.existsSync(codexAuthPath)) {
+      const authData = JSON.parse(fs.readFileSync(codexAuthPath, 'utf8'));
+      hasCodexAuth = authData.auth_mode === 'chatgpt' && authData.tokens && authData.tokens.id_token;
+    }
+  } catch (e) {
+    // Auth file might be corrupted or inaccessible
+  }
+
+  // If we have ChatGPT auth, use the codex CLI
+  if (hasCodexAuth) {
+    const codexPath = agent.codexPath || 'codex';
+    const workDir = agent.workDir || process.env.HOME;
+
+    try {
+      const args = buildCodexExecArgs(agent, { stdinPrompt: true });
+
+      // Use Codex's non-interactive entrypoint; the default TUI requires a TTY.
+      const proc = spawn(codexPath, args, {
+        env: { ...getLoginEnv() },
+        cwd: workDir,
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+
+      // Send the message via stdin and get the response
+      return new Promise((resolve, reject) => {
+        let stdout = '';
+        let stderr = '';
+
+        proc.stdin.write(lastUserMsg.content);
+        proc.stdin.end();
+
+        proc.stdout.on('data', (d) => { stdout += d.toString(); });
+        proc.stderr.on('data', (d) => { stderr += d.toString(); });
+
+        const timeout = agent.timeout || 300000;
+        let timer = setTimeout(() => {
+          proc.kill();
+          reject(new Error('Command timeout'));
+        }, timeout);
+
+        proc.on('close', (code) => {
+          clearTimeout(timer);
+          if (stdout.trim()) {
+            const content = extractCodexResponse(stdout);
+            resolve({ content });
+          } else if (code === 0) {
+            resolve({ content: '' });
+          } else {
+            reject(new Error(stderr.trim() || `Codex exited with code ${code}`));
+          }
+        });
+
+        proc.on('error', (err) => {
+          clearTimeout(timer);
+          reject(err);
+        });
+      });
+    } catch (err) {
+      return { error: err.message };
+    }
+  }
+
+  // Prefer SDK if API key is available and no ChatGPT auth
   const apiKey = agent.apiKey || process.env.OPENAI_API_KEY;
   if (apiKey && agent.useSDK !== false) {
     try {
@@ -1132,58 +1215,46 @@ async function chatCodexLocal(agent, messages) {
     }
   }
 
-  // Fallback to CLI if no API key or SDK disabled
-  const codexPath = agent.codexPath || 'codex';
-  const workDir = agent.workDir || process.env.HOME;
-  const escapedMsg = lastUserMsg.content;
-
-  const args = [escapedMsg, '--full-auto'];
-  if (agent.model) args.push('--model', agent.model);
-  if (agent.codexArgs) {
-    args.push(...agent.codexArgs.split(/\s+/).filter(Boolean));
-  }
-
-  try {
-    const output = await runLocalCommand(codexPath, args, {
-      cwd: workDir,
-      timeout: agent.timeout || 300000,
-    });
-
-    // Parse JSONL output
-    let content = '';
-    let thinking = null;
-    const lines = output.split('\n').filter(l => l.trim());
-    for (const line of lines) {
-      try {
-        const evt = JSON.parse(line);
-        if (evt.type === 'message' && evt.message?.content) {
-          for (const block of (Array.isArray(evt.message.content) ? evt.message.content : [])) {
-            if (block.type === 'output_text' || block.type === 'text') {
-              content += (block.text || '');
-            } else if (block.type === 'reasoning' || block.type === 'thinking') {
-              thinking = (thinking || '') + (block.text || block.thinking || '');
-            }
-          }
-        }
-        if (evt.type === 'text' || evt.type === 'output_text') {
-          content += (evt.text || '');
-        }
-      } catch { /* skip non-JSON lines */ }
-    }
-
-    if (!content) content = extractCodexResponse(output);
-    return { content, thinking };
-  } catch (err) {
-    const msg = err.message || '';
-    if (msg.includes('401') || msg.includes('authentication') || msg.includes('API key')) {
-      return { error: 'Codex is not authenticated. Make sure your OPENAI_API_KEY is set.\n\nRun: export OPENAI_API_KEY=your-key\n\nOr add it to your shell profile (~/.zshrc or ~/.bashrc).' };
-    }
-    return { error: msg };
-  }
+  // Fallback - need either ChatGPT auth or API key
+  return {
+    error: 'Codex requires authentication. You have two options:\n\n' +
+           'Option 1: Login with ChatGPT (recommended):\n' +
+           '   Run: codex auth\n' +
+           '   This will open a browser to login with your ChatGPT account\n\n' +
+           'Option 2: Use an OpenAI API key:\n' +
+           '   • Add an API key to your agent configuration, or\n' +
+           '   • Set OPENAI_API_KEY environment variable:\n' +
+           '     export OPENAI_API_KEY=your-key-here\n\n' +
+           'Get your API key from: https://platform.openai.com/api-keys'
+  };
 }
 
 async function pingCodexLocal(agent) {
-  // Try SDK first if API key is available
+  // Check if codex has ChatGPT auth
+  const fs = require('fs');
+  const homeDir = require('os').homedir();
+  const codexAuthPath = path.join(homeDir, '.codex', 'auth.json');
+  let hasCodexAuth = false;
+  try {
+    if (fs.existsSync(codexAuthPath)) {
+      const authData = JSON.parse(fs.readFileSync(codexAuthPath, 'utf8'));
+      hasCodexAuth = authData.auth_mode === 'chatgpt' && authData.tokens && authData.tokens.id_token;
+    }
+  } catch (e) {
+    // Auth file might be corrupted or inaccessible
+  }
+
+  if (hasCodexAuth) {
+    try {
+      const codexPath = agent.codexPath || 'codex';
+      const output = await runLocalCommand(codexPath, ['--version'], { timeout: 10000 });
+      return { online: true, info: `Codex (ChatGPT auth): ${output.trim()}` };
+    } catch (err) {
+      return { online: false, error: err.message };
+    }
+  }
+
+  // Try SDK if API key is available
   const apiKey = agent.apiKey || process.env.OPENAI_API_KEY;
   if (apiKey && agent.useSDK !== false) {
     try {
@@ -1204,14 +1275,11 @@ async function pingCodexLocal(agent) {
     }
   }
 
-  // Fallback to CLI
-  try {
-    const codexPath = agent.codexPath || 'codex';
-    const output = await runLocalCommand(codexPath, ['--version'], { timeout: 10000 });
-    return { online: true, info: output.trim() };
-  } catch (err) {
-    return { online: false, error: err.message };
-  }
+  // Fallback message - need auth
+  return {
+    online: false,
+    error: 'Codex needs authentication. Run "codex auth" to login with ChatGPT or set OPENAI_API_KEY.'
+  };
 }
 
 async function chatCodexSSH(agent, messages) {
@@ -1219,8 +1287,10 @@ async function chatCodexSSH(agent, messages) {
   if (!lastUserMsg) return { error: 'No user message found' };
 
   const escapedMsg = lastUserMsg.content.replace(/'/g, "'\\''").replace(/"/g, '\\"');
-  let cmd = `codex '${escapedMsg}'`;
+  let cmd = `codex exec --full-auto --color never`;
+  if (agent.skipGitRepoCheck !== false) cmd += ` --skip-git-repo-check`;
   if (agent.model) cmd += ` --model '${agent.model}'`;
+  cmd += ` '${escapedMsg}'`;
   cmd += ' 2>&1';
 
   try {
@@ -1666,4 +1736,3 @@ async function streamOpenAI(event, requestId, agent, messages) {
   });
   await makeStreamRequest(url, { method: 'POST', headers }, body, event, requestId);
 }
-

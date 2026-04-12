@@ -2057,7 +2057,7 @@
       { name: 'OpenClaw (SSH)', emoji: 'OC', provider: 'openclaw', sshHost: '', sshUser: 'root', model: '', providerClass: 'provider-openclaws', desc: 'OpenClaw on a remote VPS' },
       { name: 'Hermes (Local)', emoji: 'H', provider: 'hermes-local', model: '', providerClass: 'provider-hermes', desc: 'Local Hermes Agent instance' },
       { name: 'Hermes (SSH)', emoji: 'H', provider: 'hermes', sshHost: '', sshUser: 'root', model: '', providerClass: 'provider-hermes', desc: 'Hermes on a remote VPS' },
-      { name: 'Codex (Local)', emoji: 'CX', provider: 'codex', model: '', providerClass: 'provider-codex', desc: 'Local OpenAI Codex CLI agent' },
+      { name: 'Codex (Local)', emoji: 'CX', provider: 'codex', model: '', skipGitRepoCheck: true, providerClass: 'provider-codex', desc: 'Local OpenAI Codex CLI agent' },
     ];
 
     // ── Settings Modal ──
@@ -2266,6 +2266,15 @@
                     <div className="form-row">
                       <label>Extra CLI args (optional)</label>
                       <input value={form.codexArgs || ''} onChange={e => setForm(f => ({ ...f, codexArgs: e.target.value }))} placeholder="e.g. --full-auto" />
+                    </div>
+                    <div className="form-row">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <input type="checkbox" checked={form.skipGitRepoCheck !== false} onChange={e => setForm(f => ({ ...f, skipGitRepoCheck: e.target.checked }))} style={{ width: 'auto' }} />
+                        Trust working directory outside Git
+                      </label>
+                      <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 4 }}>
+                        Adds --skip-git-repo-check for Codex runs in this agent's working directory.
+                      </div>
                     </div>
                     <div className="form-row">
                       <label>Timeout (seconds)</label>
