@@ -1816,11 +1816,11 @@ const LOCAL_COMMANDS = {
 // How to discover and execute commands for each provider
 const PROVIDER_CONFIG = {
   'claude-code': {
-    // Use the SDK to execute slash commands — they're just prompts starting with /
-    discoverCmd: (agent) => ({ sdk: true, prompt: '/help', cwd: agent.workDir || process.env.HOME }),
+    // Use the SDK's supportedCommands() method to get ALL available commands
+    discoverCmd: async (agent) => ({ sdkCommands: true, agent }),
     execCmd: (agent, slashCmd, arg) => ({ sdk: true, prompt: `${slashCmd}${arg ? ' ' + arg : ''}`, cwd: agent.workDir || process.env.HOME }),
     parseHelp: (output) => {
-      // Parse Claude Code /help output: lines like "/command  description" or "/command - description"
+      // This is now only used as a fallback if supportedCommands() fails
       const cmds = [];
       const lines = output.split('\n');
       for (const line of lines) {
@@ -1832,6 +1832,12 @@ const PROVIDER_CONFIG = {
           }
         }
       }
+
+      // Always ensure /skills is available for Claude Code
+      if (!cmds.find(c => c.name === '/skills')) {
+        cmds.push({ name: '/skills', desc: 'Manage local workflow skills' });
+      }
+
       return cmds;
     },
   },
@@ -1867,7 +1873,11 @@ const PROVIDER_CONFIG = {
   },
   'codex': {
     discoverCmd: (agent) => ({ local: true, command: `${agent.codexPath || 'codex'} --help 2>&1`, cwd: agent.workDir }),
-    execCmd: (agent, slashCmd, arg) => ({ local: true, command: `${agent.codexPath || 'codex'} ${slashCmd.slice(1)}${arg ? ' ' + arg : ''} 2>&1`, cwd: agent.workDir }),
+    execCmd: (agent, slashCmd, arg) => {
+      if (slashCmd === '/plan') return { codexPlan: true, agent, arg };
+      return { local: true, command: `${agent.codexPath || 'codex'} ${slashCmd.slice(1)}${arg ? ' ' + arg : ''} 2>&1`, cwd: agent.workDir };
+    },
+    staticCmds: [{ name: '/plan', desc: 'Ask Codex for an implementation plan before editing' }],
     parseHelp: parseCLIHelp,
   },
   'codex-ssh': {
@@ -1877,8 +1887,10 @@ const PROVIDER_CONFIG = {
     },
     execCmd: (agent, slashCmd, arg) => {
       const workDir = agent.workDir || '~';
+      if (slashCmd === '/plan') return { codexPlan: true, agent, arg };
       return { ssh: true, agent, command: `cd ${workDir} && codex ${slashCmd.slice(1)}${arg ? ' ' + arg : ''} 2>&1` };
     },
+    staticCmds: [{ name: '/plan', desc: 'Ask Codex for an implementation plan before editing' }],
     parseHelp: parseCLIHelp,
   },
   'claude-code-ssh': {
@@ -1905,8 +1917,14 @@ const PROVIDER_CONFIG = {
         cmds.push(
           { name: '/help', desc: 'Show available commands' },
           { name: '/status', desc: 'Show session status' },
-          { name: '/clear', desc: 'Clear conversation' }
+          { name: '/clear', desc: 'Clear conversation' },
+          { name: '/skills', desc: 'Manage local workflow skills' }
         );
+      }
+
+      // Always ensure /skills is available even if not in help output
+      if (!cmds.find(c => c.name === '/skills')) {
+        cmds.push({ name: '/skills', desc: 'Manage local workflow skills' });
       }
       return cmds;
     },
@@ -1967,15 +1985,39 @@ async function discoverCommands(agent) {
   // Discover dynamic commands from the CLI
   if (config.discoverCmd) {
     try {
-      const spec = config.discoverCmd(agent);
+      const spec = await config.discoverCmd(agent);
       let output = '';
 
+      if (spec.sdkCommands) {
+        // Use the Claude Code SDK's supportedCommands() method to get ALL commands
+        try {
+          const { Session } = await getClaudeSDK();
+          const session = new Session();
+          const slashCommands = await session.supportedCommands();
+
+          // Convert SDK format to our format
+          const sdkCommands = slashCommands.map(cmd => ({
+            name: cmd.name.toLowerCase(),
+            desc: cmd.description + (cmd.argumentHint ? ` (${cmd.argumentHint})` : '')
+          })).filter(cmd => !LOCAL_COMMANDS[cmd.name]);
+
+          commands = commands.concat(sdkCommands);
+
+          // Cache and return early since we got commands directly from SDK
+          discoveredCommandsCache.set(cacheKey, { commands, timestamp: Date.now() });
+          return commands;
+        } catch (e) {
+          console.error('Failed to get commands via supportedCommands():', e.message);
+          // Fall back to the /help method below
+        }
+      }
+
       if (spec.sdk) {
-        // Use the Claude Code SDK to run the slash command
+        // Fallback: Use the Claude Code SDK to run /help command
         try {
           const { query } = await getClaudeSDK();
           const opts = buildClaudeSDKOptions(agent);
-          for await (const msg of query({ prompt: spec.prompt, options: opts })) {
+          for await (const msg of query({ prompt: spec.prompt || '/help', options: opts })) {
             if (msg.type === 'result' && msg.result) output += msg.result;
             else if (msg.type === 'assistant' && msg.message?.content) {
               for (const b of msg.message.content) {
@@ -2063,6 +2105,29 @@ ipcMain.handle('agent:exec-slash', async (_event, agent, command) => {
     const spec = config.execCmd(agent, slashCmd, arg);
     if (!spec) {
       return { error: `Unknown command: ${slashCmd}. Type / to see available commands.` };
+    }
+
+    // Codex does not expose plan mode as a CLI subcommand. Treat /plan as a
+    // planning prompt so the slash palette can offer the workflow without
+    // running `codex plan`.
+    if (spec.codexPlan) {
+      if (!arg) {
+        return { content: 'Usage: /plan <what you want Codex to plan>' };
+      }
+
+      const planPrompt = [
+        'Plan mode: create a concise implementation plan for the request below.',
+        'Do not edit files or run commands that change state. Ask clarifying questions if the request is underspecified.',
+        '',
+        arg,
+      ].join('\n');
+
+      if (provider === 'codex') {
+        return await chatCodexLocal(agent, [{ role: 'user', content: planPrompt }]);
+      }
+      if (provider === 'codex-ssh') {
+        return await chatCodexSSH(agent, [{ role: 'user', content: planPrompt }]);
+      }
     }
 
     // SDK command (Claude Code slash commands via the SDK)
