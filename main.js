@@ -175,13 +175,21 @@ function streamSSHCommand(agent, command, event, requestId, timeout = 600000) {
       '-p', String(sshPort),
     ];
     if (sshKey) args.push('-i', sshKey);
-    args.push(`${sshUser}@${sshHost}`, command);
+    // Match runSSHCommand: remote non-interactive shells often do not load the
+    // user's PATH, which makes CLI tools like codex appear to hang/fail only in
+    // streaming mode.
+    const wrappedCommand = `bash -l -c ${JSON.stringify(command)}`;
+    args.push(`${sshUser}@${sshHost}`, wrappedCommand);
 
     const proc = spawn('ssh', args);
     let fullOutput = '';
+    let stderrOutput = '';
+    let sawStdout = false;
+    let settled = false;
 
     proc.stdout.on('data', (chunk) => {
       const text = chunk.toString();
+      sawStdout = true;
       fullOutput += text;
       event.sender.send('agent:stream-chunk', requestId, text);
     });
@@ -190,20 +198,25 @@ function streamSSHCommand(agent, command, event, requestId, timeout = 600000) {
       // Some stderr is normal for SSH, ignore connection messages
       const text = chunk.toString();
       if (!text.includes('Warning:') && !text.includes('Permanently added')) {
+        stderrOutput += text;
         fullOutput += text;
       }
     });
 
     let timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
       proc.kill();
-      event.sender.send('agent:stream-done', requestId, {});
+      event.sender.send('agent:stream-error', requestId, 'SSH command timeout');
       resolve(fullOutput);
     }, timeout);
     const resetTimer = () => {
       clearTimeout(timer);
       timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
         proc.kill();
-        event.sender.send('agent:stream-done', requestId, {});
+        event.sender.send('agent:stream-error', requestId, 'SSH command timeout');
         resolve(fullOutput);
       }, timeout);
     };
@@ -212,12 +225,20 @@ function streamSSHCommand(agent, command, event, requestId, timeout = 600000) {
     proc.stderr.on('data', resetTimer);
 
     proc.on('close', (code) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      event.sender.send('agent:stream-done', requestId, {});
+      if (code !== 0 && !sawStdout) {
+        event.sender.send('agent:stream-error', requestId, stderrOutput.trim() || `SSH command exited with code ${code}`);
+      } else {
+        event.sender.send('agent:stream-done', requestId, {});
+      }
       resolve(fullOutput);
     });
 
     proc.on('error', (err) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       event.sender.send('agent:stream-error', requestId, err.message);
       reject(err);
@@ -1249,6 +1270,29 @@ function buildCodexExecArgs(agent, { stdinPrompt = false } = {}) {
   return args;
 }
 
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+function shellQuoteRemotePath(filePath) {
+  if (!filePath || filePath === '~') return '~';
+  if (filePath.startsWith('~/')) return `~/${shellQuote(filePath.slice(2))}`;
+  return shellQuote(filePath);
+}
+
+function buildRemoteCdCommand(workDir) {
+  return `cd -- ${shellQuoteRemotePath(workDir || '~')}`;
+}
+
+function buildCodexExecShellCommand(agent, { stdinPrompt = false } = {}) {
+  const parts = ['codex', 'exec', '--full-auto', '--color', 'never'];
+  if (agent.skipGitRepoCheck !== false) parts.push('--skip-git-repo-check');
+  if (agent.model) parts.push('--model', shellQuote(agent.model));
+  if (agent.codexArgs) parts.push(agent.codexArgs);
+  if (stdinPrompt) parts.push('-');
+  return parts.join(' ');
+}
+
 function expandHomeDir(filePath) {
   if (!filePath) return filePath;
   if (filePath === '~') return os.homedir();
@@ -1683,7 +1727,6 @@ async function chatCodexSSH(agent, messages) {
   const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
   if (!lastUserMsg) return { error: 'No user message found' };
 
-  const escapedMsg = lastUserMsg.content.replace(/'/g, "'\\''").replace(/"/g, '\\"');
   const workDir = agent.workDir || '~';
 
   // Check for ChatGPT auth or API key
@@ -1691,7 +1734,7 @@ async function chatCodexSSH(agent, messages) {
   try {
     authCheck = await runSSHCommand(agent,
       `test -f ~/.codex/auth.json && cat ~/.codex/auth.json | grep -q '"auth_mode"' && echo "CHATGPT" || (test -n "$OPENAI_API_KEY" && echo "API" || echo "NONE")`,
-      5000
+      15000
     );
   } catch {
     authCheck = 'NONE';
@@ -1707,11 +1750,7 @@ async function chatCodexSSH(agent, messages) {
     };
   }
 
-  let cmd = `cd ${workDir} && codex exec --full-auto --color never`;
-  if (agent.skipGitRepoCheck !== false) cmd += ` --skip-git-repo-check`;
-  if (agent.model) cmd += ` --model '${agent.model}'`;
-  cmd += ` '${escapedMsg}'`;
-  cmd += ' 2>&1';
+  const cmd = `${buildRemoteCdCommand(workDir)} && printf %s ${shellQuote(lastUserMsg.content)} | ${buildCodexExecShellCommand(agent, { stdinPrompt: true })} 2>&1`;
 
   try {
     const output = await runSSHCommand(agent, cmd, 300000);
@@ -1734,7 +1773,6 @@ async function streamCodexSSH(event, requestId, agent, messages) {
     return;
   }
 
-  const escapedMsg = lastUserMsg.content.replace(/'/g, "'\\''").replace(/"/g, '\\"');
   const workDir = agent.workDir || '~';
 
   // Check for authentication first
@@ -1742,7 +1780,7 @@ async function streamCodexSSH(event, requestId, agent, messages) {
   try {
     authCheck = await runSSHCommand(agent,
       `test -f ~/.codex/auth.json && cat ~/.codex/auth.json | grep -q '"auth_mode"' && echo "CHATGPT" || (test -n "$OPENAI_API_KEY" && echo "API" || echo "NONE")`,
-      5000
+      15000
     );
   } catch {
     authCheck = 'NONE';
@@ -1759,11 +1797,9 @@ async function streamCodexSSH(event, requestId, agent, messages) {
     return;
   }
 
-  // Build codex command - note we're using streaming output
-  let cmd = `cd ${workDir} && codex exec --full-auto --color never`;
-  if (agent.skipGitRepoCheck !== false) cmd += ` --skip-git-repo-check`;
-  if (agent.model) cmd += ` --model '${agent.model}'`;
-  cmd += ` '${escapedMsg}'`;
+  // Feed the prompt through stdin so arbitrary user text cannot break the
+  // remote shell command and Codex gets the same non-interactive mode locally.
+  const cmd = `${buildRemoteCdCommand(workDir)} && printf %s ${shellQuote(lastUserMsg.content)} | ${buildCodexExecShellCommand(agent, { stdinPrompt: true })}`;
 
   try {
     const output = await streamSSHCommand(agent, cmd, event, requestId, 600000);
@@ -1789,7 +1825,7 @@ async function pingCodexSSH(agent) {
     try {
       const authCheck = await runSSHCommand(agent,
         `test -f ~/.codex/auth.json && echo "ChatGPT auth" || (test -n "$OPENAI_API_KEY" && echo "API key" || echo "No auth")`,
-        5000
+        15000
       );
       authStatus = authCheck.trim();
     } catch {
@@ -1883,12 +1919,12 @@ const PROVIDER_CONFIG = {
   'codex-ssh': {
     discoverCmd: (agent) => {
       const workDir = agent.workDir || '~';
-      return { ssh: true, agent, command: `cd ${workDir} && codex --help 2>&1` };
+      return { ssh: true, agent, command: `${buildRemoteCdCommand(workDir)} && codex --help 2>&1` };
     },
     execCmd: (agent, slashCmd, arg) => {
       const workDir = agent.workDir || '~';
       if (slashCmd === '/plan') return { codexPlan: true, agent, arg };
-      return { ssh: true, agent, command: `cd ${workDir} && codex ${slashCmd.slice(1)}${arg ? ' ' + arg : ''} 2>&1` };
+      return { ssh: true, agent, command: `${buildRemoteCdCommand(workDir)} && codex ${slashCmd.slice(1)}${arg ? ' ' + arg : ''} 2>&1` };
     },
     staticCmds: [{ name: '/plan', desc: 'Ask Codex for an implementation plan before editing' }],
     parseHelp: parseCLIHelp,
