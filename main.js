@@ -1105,28 +1105,63 @@ async function chatClaudeCodeSSH(agent, messages) {
   const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
   if (!lastUserMsg) return { error: 'No user message found' };
 
-  const escapedMsg = lastUserMsg.content.replace(/'/g, "'\\''").replace(/"/g, '\\"');
+  // Escape for double quotes: backslash, dollar sign, backtick, double quote
+  const escapedMsg = lastUserMsg.content
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\$/g, '\\$')
+    .replace(/`/g, '\\`');
   const workDir = agent.workDir || '~';
 
-  // Build claude command with options
-  let cmd = `cd ${workDir} && claude chat`;
+  // Build claude command — use -p (print mode) for non-interactive usage
+  let cmd = `cd ${workDir} && claude -p --output-format json`;
   if (agent.model) cmd += ` --model '${agent.model}'`;
-  if (agent.continueSession) cmd += ` --continue`;
-  if (agent.sessionId) cmd += ` --resume '${agent.sessionId}'`;
+
+  // Session continuation - mirror the local logic exactly
+  if (agent.sessionId) {
+    cmd += ` --resume '${agent.sessionId}'`;
+  } else if (agent.continueSession) {
+    cmd += ` --continue`;
+  }
 
   // Add permission mode
   const permMode = agent.permissionMode || 'acceptEdits';
   if (permMode === 'bypassPermissions') {
-    cmd += ' --yes';
+    cmd += ' --dangerously-skip-permissions';
+  } else {
+    cmd += ` --permission-mode '${permMode}'`;
   }
 
-  // Add the message
-  cmd += ` '${escapedMsg}' 2>&1`;
+  // Add allowed tools whitelist
+  if (agent.allowedTools) {
+    const tools = agent.allowedTools.split(/[,\s]+/).filter(Boolean).join(',');
+    cmd += ` --allowedTools '${tools}'`;
+  }
+
+  // Add system prompt override
+  if (agent.systemPrompt) {
+    const escapedPrompt = agent.systemPrompt
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\$/g, '\\$')
+      .replace(/`/g, '\\`');
+    cmd += ` --system-prompt "${escapedPrompt}"`;
+  }
+
+  // Add the message using double quotes
+  cmd += ` "${escapedMsg}" 2>&1`;
 
   try {
     const output = await runSSHCommand(agent, cmd, 300000);
-    const content = extractClaudeCodeResponse(output);
-    return { content };
+    // Try parsing JSON output first
+    try {
+      const data = JSON.parse(output);
+      return { content: data.result || data.content || data.text || output.trim(), sessionId: data.session_id };
+    } catch {
+      // Fall back to text extraction
+      const content = extractClaudeCodeResponse(output);
+      return { content };
+    }
   } catch (err) {
     const errMsg = err.message || '';
     if (errMsg.includes('401') || errMsg.includes('authentication') || errMsg.includes('not authenticated')) {
@@ -1147,35 +1182,197 @@ async function streamClaudeCodeSSH(event, requestId, agent, messages) {
     return;
   }
 
-  const escapedMsg = lastUserMsg.content.replace(/'/g, "'\\''").replace(/"/g, '\\"');
+  // Escape for double quotes: backslash, dollar sign, backtick, double quote
+  const escapedMsg = lastUserMsg.content
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\$/g, '\\$')
+    .replace(/`/g, '\\`');
   const workDir = agent.workDir || '~';
 
-  // Build claude command with streaming output
-  let cmd = `cd ${workDir} && claude chat`;
+  // Build claude command — use -p with stream-json for real-time NDJSON streaming
+  let cmd = `cd ${workDir} && claude -p --output-format stream-json --verbose --include-partial-messages`;
   if (agent.model) cmd += ` --model '${agent.model}'`;
-  if (agent.continueSession) cmd += ` --continue`;
-  if (agent.sessionId) cmd += ` --resume '${agent.sessionId}'`;
+
+  // Session continuation - mirror the local logic exactly
+  if (agent.sessionId) {
+    cmd += ` --resume '${agent.sessionId}'`;
+  } else if (agent.continueSession) {
+    cmd += ` --continue`;
+  }
 
   // Add permission mode
   const permMode = agent.permissionMode || 'acceptEdits';
   if (permMode === 'bypassPermissions') {
-    cmd += ' --yes';
+    cmd += ' --dangerously-skip-permissions';
+  } else {
+    cmd += ` --permission-mode '${permMode}'`;
   }
 
-  // Add the message
-  cmd += ` '${escapedMsg}'`;
+  // Add allowed tools whitelist
+  if (agent.allowedTools) {
+    const tools = agent.allowedTools.split(/[,\s]+/).filter(Boolean).join(',');
+    cmd += ` --allowedTools '${tools}'`;
+  }
 
-  try {
-    const output = await streamSSHCommand(agent, cmd, event, requestId, 600000);
-    // streamSSHCommand handles sending chunks and done event
-  } catch (err) {
-    const msg = err.message || '';
-    if (msg.includes('401') || msg.includes('authentication') || msg.includes('not authenticated')) {
-      event.sender.send('agent:stream-error', requestId, 'Claude Code on remote is not authenticated. SSH into the machine and run: claude auth login');
-    } else {
-      event.sender.send('agent:stream-error', requestId, msg);
+  // Add system prompt override
+  if (agent.systemPrompt) {
+    const escapedPrompt = agent.systemPrompt
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\$/g, '\\$')
+      .replace(/`/g, '\\`');
+    cmd += ` --system-prompt "${escapedPrompt}"`;
+  }
+
+  // Add the message using double quotes
+  cmd += ` "${escapedMsg}"`;
+
+  // Spawn SSH directly and parse NDJSON for proper streaming
+  const sshUser = agent.sshUser || 'root';
+  const sshHost = agent.sshHost;
+  const sshPort = agent.sshPort || 22;
+  const sshKey = agent.sshKey || '';
+
+  const sshArgs = [
+    '-o', 'StrictHostKeyChecking=no',
+    '-o', 'ConnectTimeout=10',
+    '-p', String(sshPort),
+  ];
+  if (sshKey) sshArgs.push('-i', sshKey);
+  const wrappedCommand = `bash -l -c ${JSON.stringify(cmd)}`;
+  sshArgs.push(`${sshUser}@${sshHost}`, wrappedCommand);
+
+  const proc = spawn('ssh', sshArgs);
+  let buffer = '';
+  let stderrOutput = '';
+  let sessionId = null;
+  let settled = false;
+  const seenDeltaBlocks = new Set(); // track blocks streamed via deltas to avoid duplicates
+
+  proc.stdout.on('data', (chunk) => {
+    buffer += chunk.toString();
+    const lines = buffer.split('\n');
+    buffer = lines.pop(); // keep incomplete last line in buffer
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const msg = JSON.parse(line);
+
+        // System init — capture session ID
+        if (msg.type === 'system' && msg.subtype === 'init') {
+          sessionId = msg.session_id;
+          continue;
+        }
+
+        // Content block deltas — token-by-token streaming
+        if (msg.type === 'content_block_delta') {
+          if (msg.delta?.type === 'text_delta' && msg.delta.text) {
+            event.sender.send('agent:stream-chunk', requestId, msg.delta.text);
+          }
+          if (msg.delta?.type === 'thinking_delta' && msg.delta.thinking) {
+            event.sender.send('agent:stream-thinking', requestId, msg.delta.thinking);
+          }
+          continue;
+        }
+
+        // Content block start — track blocks for deduplication
+        if (msg.type === 'content_block_start' && msg.index != null) {
+          seenDeltaBlocks.add(msg.index);
+          continue;
+        }
+
+        // Complete assistant messages — emit tool_use blocks and any text not already streamed
+        if (msg.type === 'assistant' && msg.message?.content) {
+          for (let i = 0; i < msg.message.content.length; i++) {
+            const block = msg.message.content[i];
+            if (block.type === 'tool_use') {
+              event.sender.send('agent:stream-tool-use', requestId, {
+                id: block.id,
+                tool: block.name,
+                input: block.input,
+              });
+            }
+            // Only emit text/thinking if not already sent via deltas
+            if (!seenDeltaBlocks.has(i)) {
+              if (block.type === 'text' && block.text) {
+                event.sender.send('agent:stream-chunk', requestId, block.text);
+              }
+              if (block.type === 'thinking' && block.thinking) {
+                event.sender.send('agent:stream-thinking', requestId, block.thinking);
+              }
+            }
+          }
+          seenDeltaBlocks.clear();
+          continue;
+        }
+
+        // Result — capture final session ID
+        if (msg.type === 'result') {
+          sessionId = msg.session_id || sessionId;
+          continue;
+        }
+      } catch {
+        // Not valid JSON — emit as raw text (shouldn't happen with stream-json)
+        if (line.trim()) {
+          event.sender.send('agent:stream-chunk', requestId, line);
+        }
+      }
     }
-  }
+  });
+
+  proc.stderr.on('data', (chunk) => {
+    const text = chunk.toString();
+    if (!text.includes('Warning:') && !text.includes('Permanently added')) {
+      stderrOutput += text;
+    }
+  });
+
+  let timer = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    proc.kill();
+    event.sender.send('agent:stream-error', requestId, 'SSH command timeout');
+  }, 600000);
+  const resetTimer = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      proc.kill();
+      event.sender.send('agent:stream-error', requestId, 'SSH command timeout');
+    }, 600000);
+  };
+  proc.stdout.on('data', resetTimer);
+  proc.stderr.on('data', resetTimer);
+
+  return new Promise((resolve, reject) => {
+    proc.on('close', (code) => {
+      if (settled) return resolve();
+      settled = true;
+      clearTimeout(timer);
+      if (code !== 0 && stderrOutput.trim()) {
+        const errMsg = stderrOutput.trim();
+        if (errMsg.includes('401') || errMsg.includes('authentication') || errMsg.includes('not authenticated')) {
+          event.sender.send('agent:stream-error', requestId, 'Claude Code on remote is not authenticated. SSH into the machine and run: claude auth login');
+        } else {
+          event.sender.send('agent:stream-error', requestId, errMsg);
+        }
+      } else {
+        event.sender.send('agent:stream-done', requestId, { sessionId });
+      }
+      resolve();
+    });
+
+    proc.on('error', (err) => {
+      if (settled) return resolve();
+      settled = true;
+      clearTimeout(timer);
+      event.sender.send('agent:stream-error', requestId, err.message);
+      resolve();
+    });
+  });
 }
 
 async function pingClaudeCodeSSH(agent) {
@@ -2025,19 +2222,45 @@ async function discoverCommands(agent) {
       let output = '';
 
       if (spec.sdkCommands) {
-        // Use the Claude Code SDK's supportedCommands() method to get ALL commands
+        // Use the Claude Code SDK query().supportedCommands() to get available commands
         try {
-          const { Session } = await getClaudeSDK();
-          const session = new Session();
-          const slashCommands = await session.supportedCommands();
+          const { query: sdkQuery } = await getClaudeSDK();
+          const opts = buildClaudeSDKOptions(spec.agent || agent);
+          const q = sdkQuery({ prompt: '', options: opts });
+          const slashCommands = await q.supportedCommands();
+          q.return(); // clean up the generator
 
-          // Convert SDK format to our format
-          const sdkCommands = slashCommands.map(cmd => ({
-            name: cmd.name.toLowerCase(),
-            desc: cmd.description + (cmd.argumentHint ? ` (${cmd.argumentHint})` : '')
-          })).filter(cmd => !LOCAL_COMMANDS[cmd.name]);
+          // Convert SDK format to our format (SDK returns names without leading /)
+          const sdkCommands = slashCommands.map(cmd => {
+            const name = cmd.name.startsWith('/') ? cmd.name.toLowerCase() : `/${cmd.name.toLowerCase()}`;
+            return {
+              name,
+              desc: cmd.description + (cmd.argumentHint ? ` (${cmd.argumentHint})` : '')
+            };
+          }).filter(cmd => !LOCAL_COMMANDS[cmd.name]);
 
           commands = commands.concat(sdkCommands);
+
+          // Add well-known Claude Code commands not reported by supportedCommands()
+          const existingNames = new Set(commands.map(c => c.name));
+          const builtinCommands = [
+            { name: '/model', desc: 'Switch AI model (e.g. /model sonnet)' },
+            { name: '/fast', desc: 'Toggle fast output mode' },
+            { name: '/help', desc: 'Show available commands' },
+            { name: '/permissions', desc: 'View or update permissions' },
+            { name: '/memory', desc: 'View or manage memory files' },
+            { name: '/config', desc: 'Open or edit configuration' },
+            { name: '/doctor', desc: 'Check environment and diagnose issues' },
+            { name: '/login', desc: 'Sign in to your account' },
+            { name: '/logout', desc: 'Sign out of your account' },
+            { name: '/bug', desc: 'Report a bug' },
+            { name: '/vim', desc: 'Toggle vim keybindings' },
+          ];
+          for (const cmd of builtinCommands) {
+            if (!existingNames.has(cmd.name)) {
+              commands.push(cmd);
+            }
+          }
 
           // Cache and return early since we got commands directly from SDK
           discoveredCommandsCache.set(cacheKey, { commands, timestamp: Date.now() });
