@@ -1392,7 +1392,7 @@
                       )}
                     </div>
                     <div className="agent-provider">
-                      {agent.provider === 'claude-code' ? 'Claude Code' : agent.provider === 'openclaw-local' ? 'OpenClaw Local' : agent.provider === 'openclaw' ? 'OpenClaw SSH' : agent.provider === 'hermes-local' ? 'Hermes Local' : agent.provider === 'hermes' ? 'Hermes SSH' : agent.provider === 'codex' ? 'Codex' : agent.provider === 'openai-compat' ? 'OpenAI Compat' : agent.provider}
+                      {agent.provider === 'claude-code' ? 'Claude Code' : agent.provider === 'claude-code-ssh' ? 'Claude Code SSH' : agent.provider === 'openclaw-local' ? 'OpenClaw Local' : agent.provider === 'openclaw' ? 'OpenClaw SSH' : agent.provider === 'hermes-local' ? 'Hermes Local' : agent.provider === 'hermes' ? 'Hermes SSH' : agent.provider === 'codex' ? 'Codex' : agent.provider === 'codex-ssh' ? 'Codex SSH' : agent.provider === 'openai-compat' ? 'OpenAI Compat' : agent.provider}
                       {agent.model ? ` / ${agent.model}` : ''}
                     </div>
                   </div>
@@ -2053,11 +2053,13 @@
     // ── Agent Presets ──
     const PRESETS = [
       { name: 'Claude Code (Local)', emoji: 'CC', provider: 'claude-code', model: '', workDir: '', providerClass: 'provider-claude-code', desc: 'Local Claude Code CLI instance' },
+      { name: 'Claude Code (SSH)', emoji: 'CC', provider: 'claude-code-ssh', sshHost: '', sshUser: 'root', model: '', workDir: '', providerClass: 'provider-claude-code', desc: 'Claude Code on a remote server' },
       { name: 'OpenClaw (Local)', emoji: 'OC', provider: 'openclaw-local', model: '', providerClass: 'provider-openclaws', desc: 'Local OpenClaw CLI instance' },
       { name: 'OpenClaw (SSH)', emoji: 'OC', provider: 'openclaw', sshHost: '', sshUser: 'root', model: '', providerClass: 'provider-openclaws', desc: 'OpenClaw on a remote VPS' },
       { name: 'Hermes (Local)', emoji: 'H', provider: 'hermes-local', model: '', providerClass: 'provider-hermes', desc: 'Local Hermes Agent instance' },
       { name: 'Hermes (SSH)', emoji: 'H', provider: 'hermes', sshHost: '', sshUser: 'root', model: '', providerClass: 'provider-hermes', desc: 'Hermes on a remote VPS' },
       { name: 'Codex (Local)', emoji: 'CX', provider: 'codex', model: '', skipGitRepoCheck: true, providerClass: 'provider-codex', desc: 'Local OpenAI Codex CLI agent' },
+      { name: 'Codex (SSH)', emoji: 'CX', provider: 'codex-ssh', sshHost: '', sshUser: 'root', model: '', skipGitRepoCheck: true, providerClass: 'provider-codex', desc: 'Codex on a remote server' },
     ];
 
     // ── Settings Modal ──
@@ -2072,11 +2074,15 @@
 
       const providerClasses = {
         'claude-code': 'provider-claude-code',
+        'claude-code-ssh': 'provider-claude-code',
         'openclaw': 'provider-openclaws',
+        'openclaw-local': 'provider-openclaws',
         'hermes': 'provider-hermes',
+        'hermes-local': 'provider-hermes',
         'openai-compat': 'provider-generic',
         'openai': 'provider-openai',
         'codex': 'provider-codex',
+        'codex-ssh': 'provider-codex',
       };
 
       const handleSave = () => {
@@ -2178,11 +2184,13 @@
                   <label>Provider</label>
                   <select value={form.provider || ''} onChange={e => setForm(f => ({ ...f, provider: e.target.value }))}>
                     <option value="claude-code">Claude Code (Local)</option>
+                    <option value="claude-code-ssh">Claude Code (SSH)</option>
                     <option value="openclaw-local">OpenClaw (Local)</option>
                     <option value="openclaw">OpenClaw (SSH)</option>
                     <option value="hermes-local">Hermes (Local)</option>
                     <option value="hermes">Hermes (SSH)</option>
                     <option value="codex">Codex (Local)</option>
+                    <option value="codex-ssh">Codex (SSH)</option>
                     <option value="openai-compat">OpenAI Compatible (vLLM, etc.)</option>
                   </select>
                 </div>
@@ -2403,6 +2411,93 @@
                     <div className="form-row">
                       <label>Model</label>
                       <input value={form.model || ''} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} placeholder="e.g. gpt-4, llama3, etc." />
+                    </div>
+                  </>
+                )}
+
+                {form.provider === 'claude-code-ssh' && (
+                  <>
+                    <div className="form-row">
+                      <label>SSH Host</label>
+                      <input value={form.sshHost || ''} onChange={e => setForm(f => ({ ...f, sshHost: e.target.value }))} placeholder="your-server.com or IP address" />
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <div className="form-row" style={{ flex: 1 }}>
+                        <label>SSH User</label>
+                        <input value={form.sshUser || ''} onChange={e => setForm(f => ({ ...f, sshUser: e.target.value }))} placeholder="root" />
+                      </div>
+                      <div className="form-row" style={{ flex: 1 }}>
+                        <label>SSH Port</label>
+                        <input type="number" value={form.sshPort || 22} onChange={e => setForm(f => ({ ...f, sshPort: parseInt(e.target.value) || 22 }))} />
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <label>SSH Key Path (optional)</label>
+                      <input value={form.sshKey || ''} onChange={e => setForm(f => ({ ...f, sshKey: e.target.value }))} placeholder="~/.ssh/id_rsa" />
+                    </div>
+                    <div className="form-row">
+                      <label>Working Directory on Remote</label>
+                      <input value={form.workDir || ''} onChange={e => setForm(f => ({ ...f, workDir: e.target.value }))} placeholder="e.g. /home/user/projects (blank = home dir)" />
+                    </div>
+                    <div className="form-row">
+                      <label>Model (optional)</label>
+                      <input value={form.model || ''} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} placeholder="e.g. claude-3-5-sonnet-latest" />
+                    </div>
+                    <div className="form-row">
+                      <label>Permission Mode</label>
+                      <select value={form.permissionMode || 'acceptEdits'} onChange={e => setForm(f => ({ ...f, permissionMode: e.target.value }))}>
+                        <option value="default">Default (asks for every tool)</option>
+                        <option value="acceptEdits">Accept Edits (auto-approve file edits)</option>
+                        <option value="auto">Auto (AI decides what needs approval)</option>
+                        <option value="bypassPermissions">Bypass Permissions (approve everything)</option>
+                      </select>
+                    </div>
+                    <div className="form-row">
+                      <label>Session ID (optional, to resume)</label>
+                      <input value={form.sessionId || ''} onChange={e => setForm(f => ({ ...f, sessionId: e.target.value }))} placeholder="Leave blank for new session" />
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 8 }}>
+                      Note: Claude Code must be installed and authenticated on the remote machine. SSH in and run: claude auth login
+                    </div>
+                  </>
+                )}
+
+                {form.provider === 'codex-ssh' && (
+                  <>
+                    <div className="form-row">
+                      <label>SSH Host</label>
+                      <input value={form.sshHost || ''} onChange={e => setForm(f => ({ ...f, sshHost: e.target.value }))} placeholder="your-server.com or IP address" />
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <div className="form-row" style={{ flex: 1 }}>
+                        <label>SSH User</label>
+                        <input value={form.sshUser || ''} onChange={e => setForm(f => ({ ...f, sshUser: e.target.value }))} placeholder="root" />
+                      </div>
+                      <div className="form-row" style={{ flex: 1 }}>
+                        <label>SSH Port</label>
+                        <input type="number" value={form.sshPort || 22} onChange={e => setForm(f => ({ ...f, sshPort: parseInt(e.target.value) || 22 }))} />
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <label>SSH Key Path (optional)</label>
+                      <input value={form.sshKey || ''} onChange={e => setForm(f => ({ ...f, sshKey: e.target.value }))} placeholder="~/.ssh/id_rsa" />
+                    </div>
+                    <div className="form-row">
+                      <label>Working Directory on Remote</label>
+                      <input value={form.workDir || ''} onChange={e => setForm(f => ({ ...f, workDir: e.target.value }))} placeholder="e.g. /home/user/projects (blank = home dir)" />
+                    </div>
+                    <div className="form-row">
+                      <label>Model (optional)</label>
+                      <input value={form.model || ''} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} placeholder="e.g. gpt-4o, o1-preview" />
+                    </div>
+                    <div className="form-row">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <input type="checkbox" checked={form.skipGitRepoCheck !== false} onChange={e => setForm(f => ({ ...f, skipGitRepoCheck: e.target.checked }))} />
+                        Skip git repository check
+                      </label>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 8 }}>
+                      Note: Codex must be installed on the remote with either ChatGPT auth (run: codex auth) or OPENAI_API_KEY set
                     </div>
                   </>
                 )}

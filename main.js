@@ -679,6 +679,25 @@ async function streamCodexLocal(event, requestId, agent, messages) {
     return;
   }
 
+  if (agent.useCodexSDK !== false) {
+    try {
+      const usedAgentsSDK = await streamCodexWithAgentsSDK(event, requestId, agent, lastUserMsg.content);
+      if (usedAgentsSDK) return;
+
+      await streamCodexWithCodexSDK(event, requestId, agent, lastUserMsg.content);
+      return;
+    } catch (err) {
+      activeClaudeProcs.delete(requestId);
+      const msg = err.message || '';
+      if (msg.includes('401') || msg.includes('authentication') || msg.includes('not authenticated')) {
+        event.sender.send('agent:stream-error', requestId, 'Codex is not authenticated. Run "codex auth" or set OPENAI_API_KEY.');
+      } else {
+        event.sender.send('agent:stream-error', requestId, msg);
+      }
+      return;
+    }
+  }
+
   // Check if codex has ChatGPT auth
   const fs = require('fs');
   const homeDir = require('os').homedir();
@@ -1167,6 +1186,42 @@ async function getOpenAISDK(apiKey) {
   return _openaiClient;
 }
 
+let _openAIAgentsSDK = null;
+async function getOpenAIAgentsSDK() {
+  if (!_openAIAgentsSDK) {
+    try {
+      _openAIAgentsSDK = await import('@openai/agents');
+    } catch {
+      throw new Error('OpenAI Agents SDK not installed. Run: npm install @openai/agents @openai/agents-extensions @openai/codex-sdk');
+    }
+  }
+  return _openAIAgentsSDK;
+}
+
+let _openAICodexToolSDK = null;
+async function getOpenAICodexToolSDK() {
+  if (!_openAICodexToolSDK) {
+    try {
+      _openAICodexToolSDK = await import('@openai/agents-extensions/experimental/codex');
+    } catch {
+      throw new Error('OpenAI Codex tool extension not installed. Run: npm install @openai/agents-extensions @openai/codex-sdk');
+    }
+  }
+  return _openAICodexToolSDK;
+}
+
+let _codexSDK = null;
+async function getCodexSDK() {
+  if (!_codexSDK) {
+    try {
+      _codexSDK = await import('@openai/codex-sdk');
+    } catch {
+      throw new Error('Codex SDK not installed. Run: npm install @openai/codex-sdk');
+    }
+  }
+  return _codexSDK;
+}
+
 function extractCodexResponse(output) {
   // Strip ANSI escape codes and noise
   const cleaned = output
@@ -1194,9 +1249,263 @@ function buildCodexExecArgs(agent, { stdinPrompt = false } = {}) {
   return args;
 }
 
+function expandHomeDir(filePath) {
+  if (!filePath) return filePath;
+  if (filePath === '~') return os.homedir();
+  if (filePath.startsWith('~/')) return path.join(os.homedir(), filePath.slice(2));
+  return filePath;
+}
+
+function getCodexApiKey(agent) {
+  const env = getLoginEnv();
+  return agent.apiKey || env.CODEX_API_KEY || env.OPENAI_API_KEY || process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY || '';
+}
+
+function buildCodexSDKOptions(agent, apiKey) {
+  const env = { ...getLoginEnv() };
+  if (apiKey) {
+    env.CODEX_API_KEY = apiKey;
+    env.OPENAI_API_KEY = apiKey;
+  }
+
+  const options = { env };
+  if (agent.codexPath) options.codexPathOverride = agent.codexPath;
+  if (agent.baseUrl) options.baseUrl = agent.baseUrl;
+  if (apiKey) options.apiKey = apiKey;
+  if (agent.codexConfig) options.config = agent.codexConfig;
+  return options;
+}
+
+function buildCodexThreadOptions(agent) {
+  const options = {
+    sandboxMode: agent.sandboxMode || 'workspace-write',
+    workingDirectory: expandHomeDir(agent.workDir) || process.env.HOME,
+    skipGitRepoCheck: agent.skipGitRepoCheck !== false,
+    approvalPolicy: agent.approvalPolicy || 'never',
+    webSearchEnabled: !!agent.webSearchEnabled,
+  };
+
+  if (agent.model) options.model = agent.model;
+  if (agent.reasoningEffort) options.modelReasoningEffort = agent.reasoningEffort;
+  if (typeof agent.networkAccessEnabled === 'boolean') options.networkAccessEnabled = agent.networkAccessEnabled;
+  if (Array.isArray(agent.additionalDirectories)) options.additionalDirectories = agent.additionalDirectories.map(expandHomeDir);
+  return options;
+}
+
+function createCodexEventForwarder(event, requestId) {
+  let threadId = null;
+  let sentAnyContent = false;
+  const itemTextLengths = new Map();
+  const toolState = new Map();
+
+  const sendTextDelta = (channel, item) => {
+    const text = item?.text || '';
+    if (!text) return;
+
+    const previousLength = itemTextLengths.get(item.id) || 0;
+    const delta = text.slice(previousLength);
+    itemTextLengths.set(item.id, text.length);
+
+    if (delta) {
+      event.sender.send(channel, requestId, delta);
+      if (channel === 'agent:stream-chunk') sentAnyContent = true;
+    }
+  };
+
+  const sendToolUse = (item) => {
+    if (!item?.id) return;
+
+    let tool = item.type;
+    let input = {};
+
+    if (item.type === 'command_execution') {
+      tool = 'codex_command';
+      input = { command: item.command, status: item.status, exit_code: item.exit_code };
+    } else if (item.type === 'file_change') {
+      tool = 'codex_file_change';
+      input = { status: item.status, changes: item.changes };
+    } else if (item.type === 'mcp_tool_call') {
+      tool = `codex_mcp:${item.server}/${item.tool}`;
+      input = { arguments: item.arguments, status: item.status, error: item.error };
+    } else if (item.type === 'web_search') {
+      tool = 'codex_web_search';
+      input = { query: item.query };
+    } else if (item.type === 'todo_list') {
+      tool = 'codex_todo_list';
+      input = { items: item.items };
+    } else {
+      return;
+    }
+
+    const signature = JSON.stringify({ tool, input });
+    if (toolState.get(item.id) === signature) return;
+    toolState.set(item.id, signature);
+
+    event.sender.send('agent:stream-tool-use', requestId, {
+      id: item.id,
+      tool,
+      input,
+    });
+  };
+
+  const handleItem = (item) => {
+    if (!item) return;
+    if (item.type === 'agent_message') {
+      sendTextDelta('agent:stream-chunk', item);
+    } else if (item.type === 'reasoning') {
+      sendTextDelta('agent:stream-thinking', item);
+    } else if (item.type === 'error') {
+      event.sender.send('agent:stream-error', requestId, item.message || 'Codex error');
+    } else {
+      sendToolUse(item);
+    }
+  };
+
+  return {
+    get threadId() { return threadId; },
+    get sentAnyContent() { return sentAnyContent; },
+    handle(payload) {
+      const codexEvent = payload?.event || payload;
+      if (!codexEvent) return;
+
+      if (payload?.threadId) threadId = payload.threadId;
+      if (codexEvent.type === 'thread.started') {
+        threadId = codexEvent.thread_id;
+      } else if (codexEvent.type === 'item.started' || codexEvent.type === 'item.updated' || codexEvent.type === 'item.completed') {
+        handleItem(codexEvent.item);
+      } else if (codexEvent.type === 'turn.failed') {
+        event.sender.send('agent:stream-error', requestId, codexEvent.error?.message || 'Codex turn failed');
+      } else if (codexEvent.type === 'error') {
+        event.sender.send('agent:stream-error', requestId, codexEvent.message || 'Codex error');
+      }
+    },
+    markContentSent() {
+      sentAnyContent = true;
+    },
+  };
+}
+
+async function streamCodexWithAgentsSDK(event, requestId, agent, prompt) {
+  const apiKey = getCodexApiKey(agent);
+  if (!apiKey) return false;
+
+  const { Agent, run, setDefaultOpenAIKey } = await getOpenAIAgentsSDK();
+  const { codexTool } = await getOpenAICodexToolSDK();
+
+  setDefaultOpenAIKey(apiKey);
+
+  const abortController = new AbortController();
+  activeClaudeProcs.set(requestId, {
+    abort: () => abortController.abort(),
+  });
+
+  const forwarder = createCodexEventForwarder(event, requestId);
+  const context = {};
+  if (agent.sessionId) context.codexThreadId = agent.sessionId;
+
+  const tool = codexTool({
+    codexOptions: buildCodexSDKOptions(agent, apiKey),
+    defaultThreadOptions: buildCodexThreadOptions(agent),
+    defaultTurnOptions: { signal: abortController.signal },
+    useRunContextThreadId: true,
+    onStream: async (codexEvent) => {
+      forwarder.handle(codexEvent);
+    },
+  });
+
+  const codexAgent = new Agent({
+    name: agent.name || 'Codex',
+    model: agent.agentModel || agent.model || 'gpt-5.4',
+    instructions: [
+      agent.systemPrompt || '',
+      'For every user request, call the codex tool exactly once with one text input containing the request. Do not answer directly unless the tool is unavailable.',
+    ].filter(Boolean).join('\n\n'),
+    tools: [tool],
+    toolUseBehavior: 'stop_on_first_tool',
+  });
+
+  const result = await run(codexAgent, prompt, {
+    stream: true,
+    context,
+    maxTurns: 3,
+    signal: abortController.signal,
+  });
+
+  try {
+    for await (const streamEvent of result) {
+      if (streamEvent.type === 'run_item_stream_event' && streamEvent.name === 'tool_called') {
+        const rawItem = streamEvent.item?.rawItem || {};
+        event.sender.send('agent:stream-tool-use', requestId, {
+          id: rawItem.id || rawItem.callId || rawItem.call_id || 'codex',
+          tool: rawItem.name || 'codex',
+          input: rawItem.arguments || {},
+        });
+      }
+    }
+    await result.completed;
+
+    if (!forwarder.sentAnyContent && result.finalOutput) {
+      const text = typeof result.finalOutput === 'string' ? result.finalOutput : JSON.stringify(result.finalOutput, null, 2);
+      event.sender.send('agent:stream-chunk', requestId, text);
+      forwarder.markContentSent();
+    }
+
+    event.sender.send('agent:stream-done', requestId, { sessionId: context.codexThreadId || forwarder.threadId || null });
+    return true;
+  } finally {
+    activeClaudeProcs.delete(requestId);
+  }
+}
+
+async function streamCodexWithCodexSDK(event, requestId, agent, prompt) {
+  const { Codex } = await getCodexSDK();
+  const apiKey = getCodexApiKey(agent);
+  const codex = new Codex(buildCodexSDKOptions(agent, apiKey));
+  const threadOptions = buildCodexThreadOptions(agent);
+  const thread = agent.sessionId ? codex.resumeThread(agent.sessionId, threadOptions) : codex.startThread(threadOptions);
+  const abortController = new AbortController();
+  const forwarder = createCodexEventForwarder(event, requestId);
+
+  activeClaudeProcs.set(requestId, {
+    abort: () => abortController.abort(),
+  });
+
+  try {
+    const { events } = await thread.runStreamed(prompt, { signal: abortController.signal });
+    for await (const codexEvent of events) {
+      forwarder.handle(codexEvent);
+    }
+    event.sender.send('agent:stream-done', requestId, { sessionId: thread.id || forwarder.threadId || null });
+  } finally {
+    activeClaudeProcs.delete(requestId);
+  }
+}
+
+async function chatCodexWithCodexSDK(agent, prompt) {
+  const { Codex } = await getCodexSDK();
+  const apiKey = getCodexApiKey(agent);
+  const codex = new Codex(buildCodexSDKOptions(agent, apiKey));
+  const threadOptions = buildCodexThreadOptions(agent);
+  const thread = agent.sessionId ? codex.resumeThread(agent.sessionId, threadOptions) : codex.startThread(threadOptions);
+  const turn = await thread.run(prompt);
+  return { content: turn.finalResponse || '', sessionId: thread.id, usage: turn.usage };
+}
+
 async function chatCodexLocal(agent, messages) {
   const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
   if (!lastUserMsg) return { error: 'No user message found' };
+
+  if (agent.useCodexSDK !== false) {
+    try {
+      return await chatCodexWithCodexSDK(agent, lastUserMsg.content);
+    } catch (err) {
+      const msg = err.message || '';
+      if (msg.includes('401') || msg.includes('authentication') || msg.includes('not authenticated')) {
+        return { error: 'Codex is not authenticated. Run "codex auth" or set OPENAI_API_KEY.' };
+      }
+      return { error: msg };
+    }
+  }
 
   // Check if codex has ChatGPT auth
   const fs = require('fs');

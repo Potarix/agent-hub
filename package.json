@@ -10,7 +10,11 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-code": "^1.0.128",
-    "electron": "^32.0.0"
+    "@openai/agents": "^0.8.3",
+    "@openai/agents-extensions": "^0.8.3",
+    "@openai/codex-sdk": "^0.120.0",
+    "electron": "^32.0.0",
+    "openai": "^6.34.0"
   },
   "author": "Omar Dadabhoy",
   "license": "MIT"
