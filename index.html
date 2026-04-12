@@ -855,15 +855,15 @@
     }
 
     .drop-zone {
-      position: absolute;
+      position: fixed;
       inset: 0;
-      background: rgba(59, 130, 246, 0.08);
-      border: 2px dashed #3b82f6;
-      border-radius: 12px;
+      background: rgba(59, 130, 246, 0.15);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
       display: none;
       align-items: center;
       justify-content: center;
-      z-index: 100;
+      z-index: 9999;
       pointer-events: none;
     }
 
@@ -872,19 +872,24 @@
     }
 
     .drop-zone-message {
-      font-size: 18px;
+      font-size: 24px;
       font-weight: 600;
       color: #3b82f6;
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 8px;
+      gap: 12px;
+      background: var(--bg-0);
+      padding: 32px 48px;
+      border-radius: 16px;
+      border: 3px dashed #3b82f6;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
     }
 
     .drop-zone-icon {
-      width: 48px;
-      height: 48px;
-      opacity: 0.8;
+      width: 64px;
+      height: 64px;
+      opacity: 0.9;
     }
 
     /* ── Settings modal ── */
@@ -1936,21 +1941,19 @@
         processImageFiles(files);
       };
 
-      // Add drag and drop listeners
+      // Add drag and drop listeners to the entire document
       useEffect(() => {
-        const chatArea = chatAreaRef.current;
-        if (!chatArea) return;
-
-        chatArea.addEventListener('dragenter', handleDragEnter);
-        chatArea.addEventListener('dragleave', handleDragLeave);
-        chatArea.addEventListener('dragover', handleDragOver);
-        chatArea.addEventListener('drop', handleDrop);
+        // Add listeners to the entire document for global drag and drop
+        document.addEventListener('dragenter', handleDragEnter);
+        document.addEventListener('dragleave', handleDragLeave);
+        document.addEventListener('dragover', handleDragOver);
+        document.addEventListener('drop', handleDrop);
 
         return () => {
-          chatArea.removeEventListener('dragenter', handleDragEnter);
-          chatArea.removeEventListener('dragleave', handleDragLeave);
-          chatArea.removeEventListener('dragover', handleDragOver);
-          chatArea.removeEventListener('drop', handleDrop);
+          document.removeEventListener('dragenter', handleDragEnter);
+          document.removeEventListener('dragleave', handleDragLeave);
+          document.removeEventListener('dragover', handleDragOver);
+          document.removeEventListener('drop', handleDrop);
         };
       }, []);
 
@@ -2129,6 +2132,17 @@
 
       return (
         <>
+          {/* Global drop zone overlay */}
+          <div className={`drop-zone ${isDragging ? 'active' : ''}`} style={{ position: 'fixed', inset: 0, zIndex: 9999 }}>
+            <div className="drop-zone-message">
+              <svg className="drop-zone-icon" viewBox="0 0 24 24" fill="none">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M7 10l5 5 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              <span>Drop images anywhere to upload</span>
+            </div>
+          </div>
           <div className="chat-header">
             <div className={`agent-avatar ${agent.providerClass}`} style={{ width: 34, height: 34, fontSize: 12 }}>
               {agent.emoji}
@@ -2151,16 +2165,6 @@
           </div>
 
           <div className="chat-messages" ref={chatAreaRef} style={{ position: 'relative' }}>
-            <div className={`drop-zone ${isDragging ? 'active' : ''}`}>
-              <div className="drop-zone-message">
-                <svg className="drop-zone-icon" viewBox="0 0 24 24" fill="none">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  <path d="M7 10l5 5 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                  <path d="M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-                <span>Drop images here</span>
-              </div>
-            </div>
             {messages.length === 0 && !loading && (
               <div className="chat-empty">
                 <div className="chat-empty-icon">
