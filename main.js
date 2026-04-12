@@ -1059,6 +1059,94 @@ ipcMain.handle('agent:open-auth-terminal', async (_event, agent) => {
   return { error: 'Please use the Login button instead.' };
 });
 
+// ── Provider: Claude Code SSH ──
+
+async function chatClaudeCodeSSH(agent, messages) {
+  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+  if (!lastUserMsg) return { error: 'No user message found' };
+
+  const escapedMsg = lastUserMsg.content.replace(/'/g, "'\\''").replace(/"/g, '\\"');
+  const workDir = agent.workDir || '~';
+
+  // Build claude command with options
+  let cmd = `cd ${workDir} && claude chat`;
+  if (agent.model) cmd += ` --model '${agent.model}'`;
+  if (agent.continueSession) cmd += ` --continue`;
+  if (agent.sessionId) cmd += ` --resume '${agent.sessionId}'`;
+
+  // Add permission mode
+  const permMode = agent.permissionMode || 'acceptEdits';
+  if (permMode === 'bypassPermissions') {
+    cmd += ' --yes';
+  }
+
+  // Add the message
+  cmd += ` '${escapedMsg}' 2>&1`;
+
+  try {
+    const output = await runSSHCommand(agent, cmd, 300000);
+    const content = extractClaudeCodeResponse(output);
+    return { content };
+  } catch (err) {
+    const errMsg = err.message || '';
+    if (errMsg.includes('401') || errMsg.includes('authentication') || errMsg.includes('not authenticated')) {
+      return { error: 'Claude Code on remote is not authenticated. SSH into the machine and run: claude auth login' };
+    }
+    const content = extractClaudeCodeResponse(errMsg);
+    if (content && content.length > 10 && !content.includes('Permission denied') && !content.includes('command not found')) {
+      return { content };
+    }
+    return { error: err.message };
+  }
+}
+
+async function streamClaudeCodeSSH(event, requestId, agent, messages) {
+  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+  if (!lastUserMsg) {
+    event.sender.send('agent:stream-error', requestId, 'No user message found');
+    return;
+  }
+
+  const escapedMsg = lastUserMsg.content.replace(/'/g, "'\\''").replace(/"/g, '\\"');
+  const workDir = agent.workDir || '~';
+
+  // Build claude command with streaming output
+  let cmd = `cd ${workDir} && claude chat`;
+  if (agent.model) cmd += ` --model '${agent.model}'`;
+  if (agent.continueSession) cmd += ` --continue`;
+  if (agent.sessionId) cmd += ` --resume '${agent.sessionId}'`;
+
+  // Add permission mode
+  const permMode = agent.permissionMode || 'acceptEdits';
+  if (permMode === 'bypassPermissions') {
+    cmd += ' --yes';
+  }
+
+  // Add the message
+  cmd += ` '${escapedMsg}'`;
+
+  try {
+    const output = await streamSSHCommand(agent, cmd, event, requestId, 600000);
+    // streamSSHCommand handles sending chunks and done event
+  } catch (err) {
+    const msg = err.message || '';
+    if (msg.includes('401') || msg.includes('authentication') || msg.includes('not authenticated')) {
+      event.sender.send('agent:stream-error', requestId, 'Claude Code on remote is not authenticated. SSH into the machine and run: claude auth login');
+    } else {
+      event.sender.send('agent:stream-error', requestId, msg);
+    }
+  }
+}
+
+async function pingClaudeCodeSSH(agent) {
+  try {
+    const output = await runSSHCommand(agent, 'claude --version 2>&1', 15000);
+    return { online: true, info: output.trim() };
+  } catch (err) {
+    return { online: false, error: err.message };
+  }
+}
+
 // ── Provider: Codex (OpenAI) Local ──
 
 // OpenAI SDK integration
@@ -1287,7 +1375,30 @@ async function chatCodexSSH(agent, messages) {
   if (!lastUserMsg) return { error: 'No user message found' };
 
   const escapedMsg = lastUserMsg.content.replace(/'/g, "'\\''").replace(/"/g, '\\"');
-  let cmd = `codex exec --full-auto --color never`;
+  const workDir = agent.workDir || '~';
+
+  // Check for ChatGPT auth or API key
+  let authCheck = '';
+  try {
+    authCheck = await runSSHCommand(agent,
+      `test -f ~/.codex/auth.json && cat ~/.codex/auth.json | grep -q '"auth_mode"' && echo "CHATGPT" || (test -n "$OPENAI_API_KEY" && echo "API" || echo "NONE")`,
+      5000
+    );
+  } catch {
+    authCheck = 'NONE';
+  }
+
+  if (authCheck.trim() === 'NONE') {
+    return {
+      error: 'Codex on remote requires authentication. SSH into the machine and either:\n\n' +
+             'Option 1: Login with ChatGPT (recommended):\n' +
+             '   Run: codex auth\n\n' +
+             'Option 2: Set OPENAI_API_KEY environment variable:\n' +
+             '   export OPENAI_API_KEY=your-key-here'
+    };
+  }
+
+  let cmd = `cd ${workDir} && codex exec --full-auto --color never`;
   if (agent.skipGitRepoCheck !== false) cmd += ` --skip-git-repo-check`;
   if (agent.model) cmd += ` --model '${agent.model}'`;
   cmd += ` '${escapedMsg}'`;
@@ -1307,10 +1418,79 @@ async function chatCodexSSH(agent, messages) {
   }
 }
 
+async function streamCodexSSH(event, requestId, agent, messages) {
+  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+  if (!lastUserMsg) {
+    event.sender.send('agent:stream-error', requestId, 'No user message found');
+    return;
+  }
+
+  const escapedMsg = lastUserMsg.content.replace(/'/g, "'\\''").replace(/"/g, '\\"');
+  const workDir = agent.workDir || '~';
+
+  // Check for authentication first
+  let authCheck = '';
+  try {
+    authCheck = await runSSHCommand(agent,
+      `test -f ~/.codex/auth.json && cat ~/.codex/auth.json | grep -q '"auth_mode"' && echo "CHATGPT" || (test -n "$OPENAI_API_KEY" && echo "API" || echo "NONE")`,
+      5000
+    );
+  } catch {
+    authCheck = 'NONE';
+  }
+
+  if (authCheck.trim() === 'NONE') {
+    event.sender.send('agent:stream-error', requestId,
+      'Codex on remote requires authentication. SSH into the machine and either:\n\n' +
+      'Option 1: Login with ChatGPT (recommended):\n' +
+      '   Run: codex auth\n\n' +
+      'Option 2: Set OPENAI_API_KEY environment variable:\n' +
+      '   export OPENAI_API_KEY=your-key-here'
+    );
+    return;
+  }
+
+  // Build codex command - note we're using streaming output
+  let cmd = `cd ${workDir} && codex exec --full-auto --color never`;
+  if (agent.skipGitRepoCheck !== false) cmd += ` --skip-git-repo-check`;
+  if (agent.model) cmd += ` --model '${agent.model}'`;
+  cmd += ` '${escapedMsg}'`;
+
+  try {
+    const output = await streamSSHCommand(agent, cmd, event, requestId, 600000);
+    // streamSSHCommand handles sending chunks and done event
+  } catch (err) {
+    const msg = err.message || '';
+    if (msg.includes('401') || msg.includes('authentication')) {
+      event.sender.send('agent:stream-error', requestId, 'Invalid API key on remote. Check OPENAI_API_KEY.');
+    } else if (msg.includes('429')) {
+      event.sender.send('agent:stream-error', requestId, 'Rate limit exceeded. Please try again later.');
+    } else {
+      event.sender.send('agent:stream-error', requestId, msg);
+    }
+  }
+}
+
 async function pingCodexSSH(agent) {
   try {
     const output = await runSSHCommand(agent, 'codex --version 2>&1', 15000);
-    return { online: true, info: output.trim() };
+
+    // Check auth status
+    let authStatus = '';
+    try {
+      const authCheck = await runSSHCommand(agent,
+        `test -f ~/.codex/auth.json && echo "ChatGPT auth" || (test -n "$OPENAI_API_KEY" && echo "API key" || echo "No auth")`,
+        5000
+      );
+      authStatus = authCheck.trim();
+    } catch {
+      authStatus = 'Unknown';
+    }
+
+    return {
+      online: true,
+      info: `${output.trim()} (${authStatus})`
+    };
   } catch (err) {
     return { online: false, error: err.message };
   }
@@ -1382,9 +1562,45 @@ const PROVIDER_CONFIG = {
     parseHelp: parseCLIHelp,
   },
   'codex-ssh': {
-    discoverCmd: (agent) => ({ ssh: true, agent, command: 'codex --help 2>&1' }),
-    execCmd: (agent, slashCmd, arg) => ({ ssh: true, agent, command: `codex ${slashCmd.slice(1)}${arg ? ' ' + arg : ''} 2>&1` }),
+    discoverCmd: (agent) => {
+      const workDir = agent.workDir || '~';
+      return { ssh: true, agent, command: `cd ${workDir} && codex --help 2>&1` };
+    },
+    execCmd: (agent, slashCmd, arg) => {
+      const workDir = agent.workDir || '~';
+      return { ssh: true, agent, command: `cd ${workDir} && codex ${slashCmd.slice(1)}${arg ? ' ' + arg : ''} 2>&1` };
+    },
     parseHelp: parseCLIHelp,
+  },
+  'claude-code-ssh': {
+    discoverCmd: (agent) => ({ ssh: true, agent, command: 'claude --help 2>&1' }),
+    execCmd: (agent, slashCmd, arg) => {
+      const workDir = agent.workDir || '~';
+      return { ssh: true, agent, command: `cd ${workDir} && claude ${slashCmd.slice(1)}${arg ? ' ' + arg : ''} 2>&1` };
+    },
+    parseHelp: (output) => {
+      // Parse Claude Code help output
+      const cmds = [];
+      const lines = output.split('\n');
+      for (const line of lines) {
+        const match = line.match(/^\s*(\/\w[\w-]*)\s+[-–—:]?\s*(.+)/);
+        if (match) {
+          const name = match[1].toLowerCase();
+          if (!LOCAL_COMMANDS[name]) {
+            cmds.push({ name, desc: match[2].trim() });
+          }
+        }
+      }
+      // Add common Claude Code commands if not found
+      if (cmds.length === 0) {
+        cmds.push(
+          { name: '/help', desc: 'Show available commands' },
+          { name: '/status', desc: 'Show session status' },
+          { name: '/clear', desc: 'Clear conversation' }
+        );
+      }
+      return cmds;
+    },
   },
 };
 
@@ -1613,6 +1829,7 @@ ipcMain.handle('agent:chat', async (_event, agent, messages) => {
     if (agent.provider === 'hermes') return await chatHermes(agent, messages);
     if (agent.provider === 'hermes-local') return await chatHermesLocal(agent, messages);
     if (agent.provider === 'claude-code') return await chatClaudeCode(agent, messages);
+    if (agent.provider === 'claude-code-ssh') return await chatClaudeCodeSSH(agent, messages);
     if (agent.provider === 'codex') return await chatCodexLocal(agent, messages);
     if (agent.provider === 'codex-ssh') return await chatCodexSSH(agent, messages);
     return await chatOpenAI(agent, messages);
@@ -1624,14 +1841,14 @@ ipcMain.handle('agent:chat', async (_event, agent, messages) => {
 ipcMain.on('agent:chat-stream', async (event, requestId, agent, messages) => {
   try {
     if (agent.provider === 'claude-code') await streamClaudeCode(event, requestId, agent, messages);
+    else if (agent.provider === 'claude-code-ssh') await streamClaudeCodeSSH(event, requestId, agent, messages);
     else if (agent.provider === 'codex') await streamCodexLocal(event, requestId, agent, messages);
+    else if (agent.provider === 'codex-ssh') await streamCodexSSH(event, requestId, agent, messages);
     else if (agent.provider === 'openclaw') await streamOpenClaw(event, requestId, agent, messages);
     else if (agent.provider === 'openclaw-local') await streamOpenClaw(event, requestId, agent, messages);
-    else if (agent.provider === 'hermes' || agent.provider === 'hermes-local' || agent.provider === 'codex-ssh') {
+    else if (agent.provider === 'hermes' || agent.provider === 'hermes-local') {
       // Providers without streaming: run non-streaming chat and emit result as a single chunk
-      const chatFn = agent.provider === 'hermes' ? chatHermes
-        : agent.provider === 'hermes-local' ? chatHermesLocal
-        : chatCodexSSH;
+      const chatFn = agent.provider === 'hermes' ? chatHermes : chatHermesLocal;
       const res = await chatFn(agent, messages);
       if (res.error) {
         event.sender.send('agent:stream-error', requestId, res.error);
@@ -1684,6 +1901,8 @@ ipcMain.handle('agent:ping', async (_event, agent) => {
       return await pingHermesLocal();
     } else if (agent.provider === 'claude-code') {
       return await pingClaudeCode(agent);
+    } else if (agent.provider === 'claude-code-ssh') {
+      return await pingClaudeCodeSSH(agent);
     } else if (agent.provider === 'codex') {
       return await pingCodexLocal(agent);
     } else if (agent.provider === 'codex-ssh') {
