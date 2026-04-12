@@ -679,6 +679,67 @@ async function streamCodexLocal(event, requestId, agent, messages) {
     return;
   }
 
+  // Prefer SDK if API key is available
+  const apiKey = agent.apiKey || process.env.OPENAI_API_KEY;
+  if (apiKey && agent.useSDK !== false) {
+    try {
+      const openai = await getOpenAISDK(apiKey);
+
+      // Build proper messages array for OpenAI
+      const formattedMessages = messages.map(m => ({
+        role: m.role,
+        content: m.content
+      }));
+
+      const stream = await openai.chat.completions.create({
+        model: agent.model || 'gpt-4o',
+        messages: formattedMessages,
+        max_tokens: agent.maxTokens || 16384,
+        temperature: agent.temperature ?? 0.7,
+        stream: true,
+      });
+
+      // Handle abortions
+      const abortController = new AbortController();
+      const activeHandle = {
+        abort: () => abortController.abort()
+      };
+      activeClaudeProcs.set(requestId, activeHandle);
+
+      try {
+        for await (const chunk of stream) {
+          if (abortController.signal.aborted) break;
+
+          const delta = chunk.choices[0]?.delta;
+          if (delta?.content) {
+            event.sender.send('agent:stream-chunk', requestId, delta.content);
+          }
+          // Check for reasoning content (o1 models)
+          if (delta?.reasoning_content) {
+            event.sender.send('agent:stream-thinking', requestId, delta.reasoning_content);
+          }
+        }
+      } finally {
+        activeClaudeProcs.delete(requestId);
+      }
+
+      event.sender.send('agent:stream-done', requestId, {});
+      return;
+    } catch (err) {
+      activeClaudeProcs.delete(requestId);
+      const msg = err.message || '';
+      if (msg.includes('401') || msg.includes('authentication')) {
+        event.sender.send('agent:stream-error', requestId, 'Invalid OpenAI API key. Please check your OPENAI_API_KEY.');
+      } else if (msg.includes('429')) {
+        event.sender.send('agent:stream-error', requestId, 'Rate limit exceeded. Please try again later.');
+      } else {
+        event.sender.send('agent:stream-error', requestId, msg);
+      }
+      return;
+    }
+  }
+
+  // Fallback to CLI if no API key or SDK disabled
   const codexPath = agent.codexPath || 'codex';
   const workDir = agent.workDir || process.env.HOME;
   const args = [lastUserMsg.content, '--experimental-json', '--full-auto', '--skip-git-repo-check'];
@@ -745,7 +806,6 @@ async function streamCodexLocal(event, requestId, agent, messages) {
     proc.on('close', (code) => {
       clearTimeout(timer);
       if (!sentAnyContent && code !== 0 && stderrBuf.trim()) {
-        // Codex exited with an error and never sent any content — surface the error
         const errMsg = stderrBuf.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').trim();
         event.sender.send('agent:stream-error', requestId, errMsg || `Codex exited with code ${code}`);
       } else {
@@ -995,6 +1055,24 @@ ipcMain.handle('agent:open-auth-terminal', async (_event, agent) => {
 
 // ── Provider: Codex (OpenAI) Local ──
 
+// OpenAI SDK integration
+let _openaiClient = null;
+async function getOpenAISDK(apiKey) {
+  if (!_openaiClient || (_openaiClient._apiKey !== apiKey && apiKey)) {
+    try {
+      const OpenAI = (await import('openai')).default;
+      _openaiClient = new OpenAI({
+        apiKey: apiKey || process.env.OPENAI_API_KEY,
+        dangerouslyAllowBrowser: false // We're in Electron main process
+      });
+      _openaiClient._apiKey = apiKey; // Store for comparison
+    } catch (err) {
+      throw new Error('OpenAI SDK not installed. Run: npm install openai');
+    }
+  }
+  return _openaiClient;
+}
+
 function extractCodexResponse(output) {
   // Strip ANSI escape codes and noise
   const cleaned = output
@@ -1017,13 +1095,48 @@ async function chatCodexLocal(agent, messages) {
   const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
   if (!lastUserMsg) return { error: 'No user message found' };
 
+  // Prefer SDK if API key is available
+  const apiKey = agent.apiKey || process.env.OPENAI_API_KEY;
+  if (apiKey && agent.useSDK !== false) {
+    try {
+      const openai = await getOpenAISDK(apiKey);
+
+      // Build proper messages array for OpenAI
+      const formattedMessages = messages.map(m => ({
+        role: m.role,
+        content: m.content
+      }));
+
+      const completion = await openai.chat.completions.create({
+        model: agent.model || 'gpt-4o',
+        messages: formattedMessages,
+        max_tokens: agent.maxTokens || 16384,
+        temperature: agent.temperature ?? 0.7,
+      });
+
+      const msg = completion.choices?.[0]?.message;
+      return {
+        content: msg?.content || '',
+        thinking: msg?.reasoning_content || null,
+        usage: completion.usage
+      };
+    } catch (err) {
+      const msg = err.message || '';
+      if (msg.includes('401') || msg.includes('authentication')) {
+        return { error: 'Invalid OpenAI API key. Please check your OPENAI_API_KEY.' };
+      }
+      if (msg.includes('429')) {
+        return { error: 'Rate limit exceeded. Please try again later.' };
+      }
+      return { error: msg };
+    }
+  }
+
+  // Fallback to CLI if no API key or SDK disabled
   const codexPath = agent.codexPath || 'codex';
   const workDir = agent.workDir || process.env.HOME;
   const escapedMsg = lastUserMsg.content;
 
-  // Use --experimental-json to get JSONL output (no TTY required),
-  // --full-auto so Codex doesn't block waiting for interactive approval,
-  // and --skip-git-repo-check so it works outside git repos.
   const args = [escapedMsg, '--experimental-json', '--full-auto', '--skip-git-repo-check'];
   if (agent.model) args.push('--model', agent.model);
   if (agent.codexArgs) {
@@ -1036,14 +1149,13 @@ async function chatCodexLocal(agent, messages) {
       timeout: agent.timeout || 300000,
     });
 
-    // Parse JSONL output — collect text content and thinking/reasoning
+    // Parse JSONL output
     let content = '';
     let thinking = null;
     const lines = output.split('\n').filter(l => l.trim());
     for (const line of lines) {
       try {
         const evt = JSON.parse(line);
-        // Collect assistant text output
         if (evt.type === 'message' && evt.message?.content) {
           for (const block of (Array.isArray(evt.message.content) ? evt.message.content : [])) {
             if (block.type === 'output_text' || block.type === 'text') {
@@ -1053,7 +1165,6 @@ async function chatCodexLocal(agent, messages) {
             }
           }
         }
-        // Also handle top-level text events
         if (evt.type === 'text' || evt.type === 'output_text') {
           content += (evt.text || '');
         }
@@ -1072,6 +1183,28 @@ async function chatCodexLocal(agent, messages) {
 }
 
 async function pingCodexLocal(agent) {
+  // Try SDK first if API key is available
+  const apiKey = agent.apiKey || process.env.OPENAI_API_KEY;
+  if (apiKey && agent.useSDK !== false) {
+    try {
+      const openai = await getOpenAISDK(apiKey);
+      // Test the connection by fetching models
+      const models = await openai.models.list();
+      const modelCount = models.data?.length || 0;
+      return {
+        online: true,
+        info: `OpenAI SDK connected (${modelCount} models available)`
+      };
+    } catch (err) {
+      const msg = err.message || '';
+      if (msg.includes('401') || msg.includes('authentication')) {
+        return { online: false, error: 'Invalid OpenAI API key' };
+      }
+      return { online: false, error: msg };
+    }
+  }
+
+  // Fallback to CLI
   try {
     const codexPath = agent.codexPath || 'codex';
     const output = await runLocalCommand(codexPath, ['--version'], { timeout: 10000 });
