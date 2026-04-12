@@ -742,7 +742,7 @@ async function streamCodexLocal(event, requestId, agent, messages) {
   // Fallback to CLI if no API key or SDK disabled
   const codexPath = agent.codexPath || 'codex';
   const workDir = agent.workDir || process.env.HOME;
-  const args = [lastUserMsg.content, '--experimental-json', '--full-auto', '--skip-git-repo-check'];
+  const args = [lastUserMsg.content, '--full-auto'];
   if (agent.model) args.push('--model', agent.model);
   if (agent.codexArgs) {
     args.push(...agent.codexArgs.split(/\s+/).filter(Boolean));
@@ -1137,7 +1137,7 @@ async function chatCodexLocal(agent, messages) {
   const workDir = agent.workDir || process.env.HOME;
   const escapedMsg = lastUserMsg.content;
 
-  const args = [escapedMsg, '--experimental-json', '--full-auto', '--skip-git-repo-check'];
+  const args = [escapedMsg, '--full-auto'];
   if (agent.model) args.push('--model', agent.model);
   if (agent.codexArgs) {
     args.push(...agent.codexArgs.split(/\s+/).filter(Boolean));
