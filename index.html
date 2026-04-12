@@ -466,6 +466,22 @@
     .typing-indicator span:nth-child(3) { animation-delay: 0.32s; }
     @keyframes bounce { 0%, 80%, 100% { transform: scale(0.5); opacity: 0.4; } 40% { transform: scale(1); opacity: 1; } }
 
+    /* Agent thinking indicator in sidebar */
+    .agent-thinking-indicator {
+      display: inline-flex;
+      gap: 2px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    .agent-thinking-indicator span {
+      width: 4px; height: 4px;
+      background: var(--accent, #7c6aff);
+      border-radius: 50%;
+      animation: bounce 1.4s infinite;
+    }
+    .agent-thinking-indicator span:nth-child(2) { animation-delay: 0.16s; }
+    .agent-thinking-indicator span:nth-child(3) { animation-delay: 0.32s; }
+
     .streaming-indicator {
       display: inline-flex;
       gap: 3px;
@@ -1228,6 +1244,7 @@
       const [showSettings, setShowSettings] = useState(false);
       const [editAgent, setEditAgent] = useState(null);
       const [theme, setTheme] = useState('dark');
+      const [loadingAgents, setLoadingAgents] = useState(new Set());
 
       const activeAgent = agents.find(a => a.id === activeId);
 
@@ -1299,6 +1316,7 @@
               agents={agents}
               activeId={activeId}
               statuses={statuses}
+              loadingAgents={loadingAgents}
               onSelect={setActiveId}
               onAdd={addAgent}
               onOpenSettings={() => setShowSettings(true)}
@@ -1315,6 +1333,14 @@
                     messages={chats[ag.id] || []}
                     setMessages={(msgs) => setChats(prev => ({ ...prev, [ag.id]: typeof msgs === 'function' ? msgs(prev[ag.id] || []) : msgs }))}
                     onUpdateAgent={updateAgent}
+                    onLoadingChange={(isLoading) => {
+                      setLoadingAgents(prev => {
+                        const next = new Set(prev);
+                        if (isLoading) next.add(ag.id);
+                        else next.delete(ag.id);
+                        return next;
+                      });
+                    }}
                   />
                 </div>
               ))}
@@ -1337,7 +1363,7 @@
     }
 
     // ── Sidebar ──
-    function Sidebar({ agents, activeId, statuses, onSelect, onAdd, onOpenSettings }) {
+    function Sidebar({ agents, activeId, statuses, loadingAgents, onSelect, onAdd, onOpenSettings }) {
       return (
         <div className="sidebar">
           <div className="sidebar-header">
@@ -1357,7 +1383,14 @@
                     {agent.emoji}
                   </div>
                   <div className="agent-info">
-                    <div className="agent-name">{agent.name}</div>
+                    <div className="agent-name">
+                      {agent.name}
+                      {loadingAgents.has(agent.id) && (
+                        <span className="agent-thinking-indicator" title="Thinking...">
+                          <span /><span /><span />
+                        </span>
+                      )}
+                    </div>
                     <div className="agent-provider">
                       {agent.provider === 'claude-code' ? 'Claude Code' : agent.provider === 'openclaw-local' ? 'OpenClaw Local' : agent.provider === 'openclaw' ? 'OpenClaw SSH' : agent.provider === 'hermes-local' ? 'Hermes Local' : agent.provider === 'hermes' ? 'Hermes SSH' : agent.provider === 'codex' ? 'Codex' : agent.provider === 'openai-compat' ? 'OpenAI Compat' : agent.provider}
                       {agent.model ? ` / ${agent.model}` : ''}
@@ -1509,7 +1542,7 @@
       );
     }
 
-    function ChatView({ agent, status, messages, setMessages, onUpdateAgent }) {
+    function ChatView({ agent, status, messages, setMessages, onUpdateAgent, onLoadingChange }) {
       const [input, setInput] = useState('');
       const [loading, setLoading] = useState(false);
       const [streamText, setStreamText] = useState('');
@@ -1651,6 +1684,13 @@
         setShowSlash(input.startsWith('/') && filteredCommands.length > 0 && !loading);
         setSlashIdx(0);
       }, [input, filteredCommands.length, loading]);
+
+      // Call onLoadingChange when loading state changes
+      useEffect(() => {
+        if (onLoadingChange) {
+          onLoadingChange(loading);
+        }
+      }, [loading, onLoadingChange]);
 
       const loadingRef = useRef(false);
 
