@@ -13,67 +13,69 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg-0: #09090f;
-      --bg-1: #0f0f18;
-      --bg-2: #161621;
-      --bg-3: #1e1e2d;
-      --bg-4: #292940;
-      --border: #1f1f32;
-      --border-light: #2e2e48;
-      --text-0: #eeeef4;
-      --text-1: #b8b8cc;
-      --text-2: #6e6e8a;
-      --accent: #7c6aff;
-      --accent-dim: #6454d4;
-      --accent-glow: rgba(124,106,255,0.15);
-      --accent-subtle: rgba(124,106,255,0.08);
-      --green: #34d399;
-      --green-dim: rgba(52,211,153,0.12);
-      --red: #f87171;
-      --red-dim: rgba(248,113,113,0.1);
-      --orange: #fbbf24;
-      --orange-dim: rgba(251,191,36,0.1);
-      --blue: #60a5fa;
+      --bg-0: #1e1e1e;
+      --bg-1: #282828;
+      --bg-2: #323232;
+      --bg-3: #3e3e3e;
+      --bg-4: #4a4a4a;
+      --border: #424242;
+      --border-light: #525252;
+      --text-0: #ececec;
+      --text-1: #c0c0c0;
+      --text-2: #8a8a8a;
+      --accent: #0A84FF;
+      --accent-dim: #006ce6;
+      --accent-glow: rgba(10,132,255,0.15);
+      --accent-subtle: rgba(10,132,255,0.08);
+      --msg-agent-bg: #262628;
+      --green: #34c759;
+      --green-dim: rgba(52,199,89,0.12);
+      --red: #ff3b30;
+      --red-dim: rgba(255,59,48,0.1);
+      --orange: #ff9f0a;
+      --orange-dim: rgba(255,159,10,0.1);
+      --blue: #0a84ff;
       --radius: 10px;
       --radius-sm: 6px;
       --radius-lg: 16px;
-      --shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
-      --shadow-md: 0 4px 16px rgba(0,0,0,0.3);
-      --shadow-lg: 0 12px 40px rgba(0,0,0,0.5);
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.1);
+      --shadow-md: 0 4px 16px rgba(0,0,0,0.2);
+      --shadow-lg: 0 12px 40px rgba(0,0,0,0.4);
       --transition: 0.18s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     html[data-theme="light"],
     html[data-theme="light"] *,
     html.light-theme {
-      --bg-0: #f4f4f8;
-      --bg-1: #ffffff;
-      --bg-2: #f0f0f5;
-      --bg-3: #e6e6ef;
-      --bg-4: #d8d8e4;
-      --border: #e0e0ec;
-      --border-light: #ccccd8;
-      --text-0: #16162a;
-      --text-1: #3e3e58;
-      --text-2: #7a7a96;
-      --accent: #6c5ce7;
-      --accent-dim: #5b4cc9;
-      --accent-glow: rgba(108,92,231,0.12);
-      --accent-subtle: rgba(108,92,231,0.06);
-      --green: #059669;
-      --green-dim: rgba(5,150,105,0.08);
-      --red: #dc2626;
-      --red-dim: rgba(220,38,38,0.06);
-      --orange: #d97706;
-      --orange-dim: rgba(217,119,6,0.08);
-      --blue: #2563eb;
+      --bg-0: #ffffff;
+      --bg-1: #f5f5f7;
+      --bg-2: #ebebeb;
+      --bg-3: #e0e0e0;
+      --bg-4: #d6d6d6;
+      --border: #e5e5ea;
+      --border-light: #d1d1d6;
+      --text-0: #000000;
+      --text-1: #3a3a3c;
+      --text-2: #8e8e93;
+      --accent: #007aff;
+      --accent-dim: #006ce6;
+      --accent-glow: rgba(0,122,255,0.12);
+      --accent-subtle: rgba(0,122,255,0.06);
+      --msg-agent-bg: #e9e9eb;
+      --green: #34C759;
+      --green-dim: rgba(52,199,89,0.08);
+      --red: #FF3B30;
+      --red-dim: rgba(255,59,48,0.06);
+      --orange: #FF9F0A;
+      --orange-dim: rgba(255,159,10,0.08);
+      --blue: #007AFF;
       --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
       --shadow-md: 0 4px 16px rgba(0,0,0,0.06);
       --shadow-lg: 0 12px 40px rgba(0,0,0,0.1);
     }
 
     body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
       background: var(--bg-0);
       color: var(--text-0);
       height: 100vh;
@@ -185,18 +187,16 @@
     }
     .agent-card:hover { background: var(--bg-2); }
     .agent-card.active {
-      background: var(--accent-subtle);
-      border-color: rgba(124,106,255,0.2);
-    }
-    .agent-card.active::before {
-      content: '';
-      position: absolute;
-      left: 0;
-      top: 8px;
-      bottom: 8px;
-      width: 3px;
-      border-radius: 0 3px 3px 0;
       background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+    .agent-card.active .agent-provider,
+    .agent-card.active .agent-name {
+      color: white;
+    }
+    .agent-card.active .agent-avatar {
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.2) inset;
     }
 
     .agent-card-header {
@@ -207,15 +207,15 @@
 
     .agent-avatar {
       width: 36px; height: 36px;
-      border-radius: 10px;
+      border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
       font-size: 13px;
-      font-weight: 700;
+      font-weight: 500;
       flex-shrink: 0;
-      letter-spacing: -0.5px;
-      box-shadow: var(--shadow-sm);
+      letter-spacing: 0.5px;
+      box-shadow: none;
     }
 
     .agent-info {
@@ -348,15 +348,26 @@
 
     /* ── Chat ── */
     .chat-header {
-      padding: 16px 20px;
+      padding: 12px 20px;
       border-bottom: 1px solid var(--border);
       display: flex;
+      flex-direction: column;
       align-items: center;
-      gap: 12px;
-      background: var(--bg-1);
+      justify-content: center;
+      gap: 4px;
+      background: rgba(var(--bg-1), 0.85); /* fallback */
+      background: color-mix(in srgb, var(--bg-1) 85%, transparent);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
       min-height: 60px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
     }
-    .chat-header .agent-name { font-size: 15px; font-weight: 600; letter-spacing: -0.2px; }
+    .chat-header .agent-name { font-size: 13px; font-weight: 600; letter-spacing: -0.2px; }
+    .chat-header .agent-avatar { width: 34px !important; height: 34px !important; }
+    .chat-header-top { display: flex; align-items: center; justify-content: center; width: 100%; position: relative; }
+    .chat-header-actions { position: absolute; right: 0; top: 0; display: flex; gap: 8px; }
 
     .completion-indicator {
       display: flex;
@@ -404,14 +415,14 @@
     }
 
     .msg {
-      max-width: 72%;
-      padding: 12px 16px;
-      border-radius: 16px;
-      font-size: 14px;
-      line-height: 1.65;
+      max-width: 75%;
+      padding: 10px 14px;
+      font-size: 15px;
+      line-height: 1.4;
       white-space: pre-wrap;
       word-break: break-word;
       animation: msgIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      position: relative;
     }
     @keyframes msgIn {
       from { opacity: 0; transform: translateY(8px); }
@@ -420,22 +431,21 @@
 
     .msg.user {
       align-self: flex-end;
-      background: linear-gradient(135deg, var(--accent), #6454d4);
+      background: var(--accent);
       color: white;
-      border-bottom-right-radius: 6px;
-      box-shadow: 0 2px 12px rgba(124,106,255,0.2);
+      border-radius: 18px 18px 4px 18px;
     }
     .msg.assistant {
       align-self: flex-start;
-      background: var(--bg-1);
-      border: 1px solid var(--border);
-      border-bottom-left-radius: 6px;
-      box-shadow: var(--shadow-sm);
+      background: var(--msg-agent-bg);
+      color: var(--text-0);
+      border-radius: 18px 18px 18px 4px;
+      border: 1px solid rgba(0,0,0,0.05); /* very subtle border to help separation */
     }
     .msg.assistant code {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 12px;
-      background: var(--bg-3);
+      font-family: "SF Mono", Menlo, Consolas, Monaco, monospace;
+      font-size: 13px;
+      background: var(--bg-2);
       padding: 2px 6px;
       border-radius: 5px;
       border: 1px solid var(--border);
@@ -803,39 +813,37 @@
       align-items: flex-end;
       gap: 8px;
       border: 1px solid var(--border);
-      border-radius: 14px;
-      background: var(--bg-2);
-      padding: 8px 10px 8px 16px;
+      border-radius: 20px;
+      background: var(--bg-1);
+      padding: 6px 6px 6px 14px;
       transition: all var(--transition);
       position: relative;
     }
     .chat-input-wrap:focus-within {
-      border-color: rgba(124,106,255,0.4);
-      box-shadow: 0 0 0 3px var(--accent-glow);
-      background: var(--bg-1);
+      border-color: var(--accent);
     }
 
     .chat-input {
       flex: 1;
-      padding: 4px 0;
+      padding: 6px 0;
       border: none;
       background: transparent;
       color: var(--text-0);
-      font-size: 14px;
+      font-size: 15px;
       line-height: 1.5;
       outline: none;
       resize: none;
-      min-height: 21px;
+      min-height: 22px;
       max-height: 200px;
       overflow-y: auto;
     }
     .chat-input::placeholder { color: var(--text-2); }
 
     .btn-send {
-      width: 32px;
-      height: 32px;
+      width: 28px;
+      height: 28px;
       flex-shrink: 0;
-      border-radius: 9px;
+      border-radius: 50%;
       border: none;
       background: var(--accent);
       color: white;
@@ -844,30 +852,31 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 2px 8px rgba(124,106,255,0.25);
+      margin-bottom: 2px;
     }
-    .btn-send:hover { background: var(--accent-dim); transform: scale(1.04); }
-    .btn-send:active { transform: scale(0.96); }
-    .btn-send:disabled { opacity: 0.25; cursor: not-allowed; box-shadow: none; transform: none; }
+    .btn-send:hover { background: var(--accent-dim); }
+    .btn-send:active { opacity: 0.8; }
+    .btn-send:disabled { opacity: 0.25; cursor: not-allowed; }
 
     .btn-attach {
-      width: 32px;
-      height: 32px;
+      width: 24px;
+      height: 24px;
       flex-shrink: 0;
-      border-radius: 9px;
+      border-radius: 50%;
       border: none;
-      background: var(--accent);
-      color: white;
-      font-size: 13px;
+      background: var(--bg-3);
+      color: var(--text-2);
+      font-size: 18px;
       cursor: pointer;
       transition: all var(--transition);
       display: flex;
       align-items: center;
       justify-content: center;
       margin-right: 4px;
+      margin-bottom: 4px;
     }
-    .btn-attach:hover { background: var(--accent-dim); transform: scale(1.04); }
-    .btn-attach:active { transform: scale(0.96); }
+    .btn-attach:hover { background: var(--border-light); color: var(--text-1); }
+    .btn-attach:active { opacity: 0.8; }
 
     .selected-images {
       display: flex;
@@ -1090,12 +1099,12 @@
     ::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
 
     /* ── Provider colors ── */
-    .provider-openclaws { background: linear-gradient(135deg, #f97316, #ea580c); color: white; }
-    .provider-openai { background: linear-gradient(135deg, #10a37f, #0d8c6d); color: white; }
-    .provider-claude-code { background: linear-gradient(135deg, #f59e0b, #d97706); color: #1a1a2e; }
-    .provider-hermes { background: linear-gradient(135deg, #a855f7, #7c3aed); color: white; }
-    .provider-codex { background: linear-gradient(135deg, #10a37f, #0d8c6d); color: white; }
-    .provider-generic { background: linear-gradient(135deg, var(--blue), #3b82f6); color: white; }
+    .provider-openclaws { background: #FF9500; color: white; }
+    .provider-openai { background: #34C759; color: white; }
+    .provider-claude-code { background: #FFCC00; color: #000; }
+    .provider-hermes { background: #AF52DE; color: white; }
+    .provider-codex { background: #34C759; color: white; }
+    .provider-generic { background: #007AFF; color: white; }
 
     /* ── Slash Command Palette ── */
     .slash-palette {
@@ -2246,33 +2255,32 @@
             </div>
           </div>
           <div className="chat-header">
-            <div className={`agent-avatar ${agent.providerClass}`} style={{ width: 34, height: 34, fontSize: 12 }}>
-              {agent.emoji}
-            </div>
-            <div style={{ flex: 1 }}>
-              <div className="agent-name">{agent.name}</div>
-              <div className="agent-provider" style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span className={`status-dot ${status || 'offline'}`} style={{ width: 6, height: 6 }} />
-                {status === 'online' ? 'Connected' : status === 'checking' ? 'Checking...' : 'Disconnected'}
+            <div className="chat-header-top">
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                <div className={`agent-avatar ${agent.providerClass}`} style={{ width: 34, height: 34, fontSize: 12 }}>
+                  {agent.emoji}
+                </div>
+                <div className="agent-name">{agent.name}</div>
+                <div className="agent-provider" style={{ fontSize: 10, display: 'flex', alignItems: 'center', gap: 4, opacity: 0.8 }}>
+                  <span className={`status-dot ${status || 'offline'}`} style={{ width: 6, height: 6 }} />
+                  {status === 'online' ? 'Connected' : status === 'checking' ? 'Checking...' : 'Disconnected'}
+                </div>
+              </div>
+              <div className="chat-header-actions">
+                {completionStatus === 'completed' && (
+                  <div className="completion-indicator" style={{ display: 'flex', alignItems: 'center' }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-2)', marginRight: 6 }}>Delivered</span>
+                  </div>
+                )}
+                <button
+                  className={`btn-thinking-toggle ${showThinking ? 'active' : ''}`}
+                  onClick={() => setShowThinking(t => !t)}
+                  title={showThinking ? 'Hide thinking' : 'Show thinking'}
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 1.5a4.5 4.5 0 0 0-3.2 7.6c.5.5.7 1.1.7 1.9v.5h5v-.5c0-.8.3-1.4.7-1.9A4.5 4.5 0 0 0 8 1.5zM6 13h4v.5a2 2 0 0 1-4 0V13z" fill="currentColor"/></svg>
+                </button>
               </div>
             </div>
-            {completionStatus === 'completed' && (
-              <div className="completion-indicator">
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                  <circle cx="10" cy="10" r="9" stroke="var(--green)" strokeWidth="2"/>
-                  <path d="M6 10l2.5 2.5L14 7" stroke="var(--green)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-                <span style={{ fontSize: 12, color: 'var(--green)', marginLeft: 6 }}>Delivered</span>
-              </div>
-            )}
-            <button
-              className={`btn-thinking-toggle ${showThinking ? 'active' : ''}`}
-              onClick={() => setShowThinking(t => !t)}
-              title={showThinking ? 'Hide thinking' : 'Show thinking'}
-            >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1.5a4.5 4.5 0 0 0-3.2 7.6c.5.5.7 1.1.7 1.9v.5h5v-.5c0-.8.3-1.4.7-1.9A4.5 4.5 0 0 0 8 1.5zM6 13h4v.5a2 2 0 0 1-4 0V13z" fill="currentColor"/></svg>
-              <span style={{ fontSize: 11 }}>Thinking</span>
-            </button>
           </div>
 
           <div className="chat-messages" ref={chatAreaRef} style={{ position: 'relative' }}>
@@ -2411,12 +2419,12 @@
                   style={{ display: 'none' }}
                   onChange={handleImageSelect}
                 />
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
                   <path d="M8 2v12M2 8h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
                 </svg>
               </label>
               <button className="btn-send" onClick={sendMessage} disabled={!input.trim() && selectedImages.length === 0}>
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3l5 5h-3.5v5h-3V8H3l5-5z" fill="currentColor"/></svg>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 3l5 5h-3.5v5h-3V8H3l5-5z" fill="currentColor"/></svg>
               </button>
             </div>
           </div>
