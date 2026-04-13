@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeTheme, shell } = require('electron');
 const path = require('path');
 
 const { setMainWindow, activeClaudeProcs } = require('./lib/state');
@@ -86,6 +86,17 @@ app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) creat
 // ── Theme IPC ──
 
 ipcMain.handle('theme:get', () => nativeTheme.shouldUseDarkColors);
+
+// ── External Links IPC ──
+
+ipcMain.handle('open-external', async (_event, url) => {
+  try {
+    await shell.openExternal(url);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
 
 // ── Agent Chat IPC ──
 

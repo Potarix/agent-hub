@@ -1752,6 +1752,7 @@
     // ── Message Content Component ──
     function MessageContent({ content }) {
       const [html, setHtml] = useState('');
+      const contentRef = useRef(null);
 
       useEffect(() => {
         if (!content) {
@@ -1783,9 +1784,38 @@
         }
       }, [content]);
 
+      // Add click handlers for external links
+      useEffect(() => {
+        if (!contentRef.current) return;
+
+        const handleLinkClick = (e) => {
+          const target = e.target.closest('a');
+          if (!target) return;
+
+          const href = target.getAttribute('href');
+          if (!href) return;
+
+          // Check if it's an external link (http, https, or other protocols)
+          if (href.startsWith('http://') || href.startsWith('https://') ||
+              href.startsWith('mailto:') || href.startsWith('tel:') ||
+              !href.startsWith('#') && !href.startsWith('/')) {
+            e.preventDefault();
+            window.agentHub.openExternal(href);
+          }
+        };
+
+        contentRef.current.addEventListener('click', handleLinkClick);
+        return () => {
+          if (contentRef.current) {
+            contentRef.current.removeEventListener('click', handleLinkClick);
+          }
+        };
+      }, [html]);
+
       // Render HTML content safely
       return (
         <div
+          ref={contentRef}
           className="message-content"
           dangerouslySetInnerHTML={{ __html: html }}
         />
