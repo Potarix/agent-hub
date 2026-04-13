@@ -564,9 +564,23 @@
     .agent-completion-badge {
       display: inline-flex;
       align-items: center;
-      margin-left: 6px;
+      justify-content: center;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 9px;
+      background-color: var(--blue);
+      color: white;
+      font-size: 11px;
+      font-weight: 600;
+      margin-left: 8px;
       vertical-align: middle;
       animation: fadeInScale 0.3s ease-out;
+      box-shadow: var(--shadow-sm);
+    }
+    .agent-card.active .agent-completion-badge {
+      background-color: white;
+      color: var(--accent);
     }
 
     .streaming-indicator {
@@ -1531,7 +1545,7 @@
                     setMessages={(msgs) => setChats(prev => ({ ...prev, [ag.id]: typeof msgs === 'function' ? msgs(prev[ag.id] || []) : msgs }))}
                     onUpdateAgent={updateAgent}
                     completionStatus={completionStatus[ag.id]}
-                    setCompletionStatus={(status) => setCompletionStatus(prev => ({ ...prev, [ag.id]: status }))}
+                    setCompletionStatus={(status) => setCompletionStatus(prev => ({ ...prev, [ag.id]: typeof status === 'function' ? status(prev[ag.id]) : status }))}
                     onLoadingChange={(isLoading) => {
                       setLoadingAgents(prev => {
                         const next = new Set(prev);
@@ -1597,12 +1611,9 @@
                           <span /><span /><span />
                         </span>
                       )}
-                      {completionStatus[agent.id] === 'completed' && (
-                        <span className="agent-completion-badge" title="Delivered">
-                          <svg width="12" height="12" viewBox="0 0 20 20" fill="none">
-                            <circle cx="10" cy="10" r="9" stroke="var(--green)" strokeWidth="2"/>
-                            <path d="M6 10l2.5 2.5L14 7" stroke="var(--green)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                          </svg>
+                      {typeof completionStatus[agent.id] === 'number' && completionStatus[agent.id] > 0 && (
+                        <span className="agent-completion-badge" title="Unread Messages">
+                          {completionStatus[agent.id]}
                         </span>
                       )}
                     </div>
@@ -1820,8 +1831,11 @@
             if (thinking) msg.thinking = thinking;
             setMessages(prev => [...prev, msg]);
           }
-          // Mark agent as completed
-          setCompletionStatus('completed');
+          // Mark agent as completed by incrementing unread count
+          setCompletionStatus(prev => {
+            const current = typeof prev === 'number' ? prev : 0;
+            return current + 1;
+          });
           // Update last activity time for this agent
           if (setLastActivityTime) {
             setLastActivityTime(prev => ({ ...prev, [agentRef.current.id]: Date.now() }));
@@ -2267,11 +2281,6 @@
                 </div>
               </div>
               <div className="chat-header-actions">
-                {completionStatus === 'completed' && (
-                  <div className="completion-indicator" style={{ display: 'flex', alignItems: 'center' }}>
-                    <span style={{ fontSize: 11, color: 'var(--text-2)', marginRight: 6 }}>Delivered</span>
-                  </div>
-                )}
                 <button
                   className={`btn-thinking-toggle ${showThinking ? 'active' : ''}`}
                   onClick={() => setShowThinking(t => !t)}
@@ -2366,6 +2375,11 @@
                 onAlwaysAllow={handleAlwaysAllow}
                 onDismiss={handleDismissDenials}
               />
+            )}
+            {completionStatus && typeof completionStatus === 'number' && completionStatus > 0 && !loading && messages.length > 0 && (
+              <div style={{ alignSelf: messages[messages.length - 1].role === 'user' ? 'flex-end' : 'flex-start', fontSize: 11, color: 'var(--text-2)', margin: '-4px 16px 8px 16px' }}>
+                Delivered
+              </div>
             )}
             <div ref={bottomRef} />
           </div>
