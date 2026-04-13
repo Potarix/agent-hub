@@ -27,20 +27,8 @@ async function chatHermes(agent, messages) {
   const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
   if (!lastUserMsg) return { error: 'No user message found' };
 
-  // Build conversation context from message history
-  let conversationContext = '';
-  if (messages.length > 1) {
-    // Include previous messages as context (excluding the last user message)
-    const contextMessages = messages.slice(0, -1);
-    conversationContext = contextMessages
-      .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
-      .join('\n\n');
-    conversationContext += '\n\n';
-  }
-
-  // Combine context with current message
-  const fullMessage = conversationContext + `User: ${lastUserMsg.content}\n\nAssistant:`;
-  const escapedMsg = fullMessage.replace(/'/g, "'\\''");
+  // Only send the latest message
+  const escapedMsg = lastUserMsg.content.replace(/'/g, "'\\''");
 
   let cmd = 'hermes chat';
   if (agent.hermesProvider) cmd += ` --provider '${agent.hermesProvider}'`;
@@ -75,20 +63,8 @@ async function chatHermesLocal(agent, messages) {
   const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
   if (!lastUserMsg) return { error: 'No user message found' };
 
-  // Build conversation context from message history
-  let conversationContext = '';
-  if (messages.length > 1) {
-    // Include previous messages as context (excluding the last user message)
-    const contextMessages = messages.slice(0, -1);
-    conversationContext = contextMessages
-      .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
-      .join('\n\n');
-    conversationContext += '\n\n';
-  }
-
-  // Combine context with current message
-  const fullMessage = conversationContext + `User: ${lastUserMsg.content}\n\nAssistant:`;
-  const escapedMsg = fullMessage.replace(/'/g, "'\\''");
+  // Only send the latest message
+  const escapedMsg = lastUserMsg.content.replace(/'/g, "'\\''");
   const workDir = agent.workDir || process.env.HOME;
 
   let cmd = 'hermes chat';
