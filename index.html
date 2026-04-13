@@ -2006,30 +2006,30 @@
               const current = typeof prev === 'number' ? prev : 0;
               return current + 1;
             });
+          }
 
-            // Play notification sound with better error handling
-            const audio = document.getElementById('notificationSound');
-            if (audio) {
-              audio.volume = 1.0; // Ensure volume is at max
-              audio.currentTime = 0; // Reset to beginning
-              const playPromise = audio.play();
-              if (playPromise !== undefined) {
-                playPromise.then(() => {
-                  console.log('Notification sound played successfully for completion');
-                }).catch(err => {
-                  console.error('Notification sound play failed:', err);
-                  // Try alternative approach for Electron
-                  try {
-                    audio.load();
-                    audio.play();
-                  } catch(e) {
-                    console.error('Alternative play method also failed:', e);
-                  }
-                });
-              }
-            } else {
-              console.error('Notification audio element not found');
+          // Always play notification sound when agent responds
+          const audio = document.getElementById('notificationSound');
+          if (audio) {
+            audio.volume = 1.0; // Ensure volume is at max
+            audio.currentTime = 0; // Reset to beginning
+            const playPromise = audio.play();
+            if (playPromise !== undefined) {
+              playPromise.then(() => {
+                console.log('Notification sound played successfully for completion');
+              }).catch(err => {
+                console.error('Notification sound play failed:', err);
+                // Try alternative approach for Electron
+                try {
+                  audio.load();
+                  audio.play();
+                } catch(e) {
+                  console.error('Alternative play method also failed:', e);
+                }
+              });
             }
+          } else {
+            console.error('Notification audio element not found');
           }
 
           // Update last activity time for this agent
@@ -2091,30 +2091,30 @@
               const current = typeof prev === 'number' ? prev : 0;
               return current + 1;
             });
+          }
 
-            // Play notification sound with better error handling
-            const audio = document.getElementById('notificationSound');
-            if (audio) {
-              audio.volume = 1.0; // Ensure volume is at max
-              audio.currentTime = 0; // Reset to beginning
-              const playPromise = audio.play();
-              if (playPromise !== undefined) {
-                playPromise.then(() => {
-                  console.log('Notification sound played successfully for completion');
-                }).catch(err => {
-                  console.error('Notification sound play failed:', err);
-                  // Try alternative approach for Electron
-                  try {
-                    audio.load();
-                    audio.play();
-                  } catch(e) {
-                    console.error('Alternative play method also failed:', e);
-                  }
-                });
-              }
-            } else {
-              console.error('Notification audio element not found');
+          // Always play notification sound for permission requests
+          const audio = document.getElementById('notificationSound');
+          if (audio) {
+            audio.volume = 1.0; // Ensure volume is at max
+            audio.currentTime = 0; // Reset to beginning
+            const playPromise = audio.play();
+            if (playPromise !== undefined) {
+              playPromise.then(() => {
+                console.log('Notification sound played successfully for completion');
+              }).catch(err => {
+                console.error('Notification sound play failed:', err);
+                // Try alternative approach for Electron
+                try {
+                  audio.load();
+                  audio.play();
+                } catch(e) {
+                  console.error('Alternative play method also failed:', e);
+                }
+              });
             }
+          } else {
+            console.error('Notification audio element not found');
           }
         });
 
