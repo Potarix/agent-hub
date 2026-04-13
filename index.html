@@ -7,6 +7,7 @@
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/marked@14/marked.min.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
@@ -426,10 +427,73 @@
       padding: 10px 14px;
       font-size: 15px;
       line-height: 1.4;
-      white-space: pre-wrap;
       word-break: break-word;
       animation: msgIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
       position: relative;
+    }
+
+    /* Message content styles for markdown */
+    .message-content {
+      white-space: normal;
+    }
+    .message-content > *:first-child {
+      margin-top: 0;
+    }
+    .message-content > *:last-child {
+      margin-bottom: 0;
+    }
+    .message-content p {
+      margin: 0.5em 0;
+    }
+    .message-content pre {
+      background: rgba(0, 0, 0, 0.05);
+      padding: 8px 12px;
+      border-radius: 4px;
+      overflow-x: auto;
+      margin: 0.5em 0;
+    }
+    .dark .message-content pre {
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .message-content code {
+      background: rgba(0, 0, 0, 0.05);
+      padding: 2px 4px;
+      border-radius: 3px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.9em;
+    }
+    .dark .message-content code {
+      background: rgba(255, 255, 255, 0.1);
+    }
+    .message-content pre code {
+      background: none;
+      padding: 0;
+    }
+    .message-content ul, .message-content ol {
+      margin: 0.5em 0;
+      padding-left: 1.5em;
+    }
+    .message-content blockquote {
+      border-left: 3px solid var(--accent);
+      margin: 0.5em 0;
+      padding-left: 1em;
+      opacity: 0.8;
+    }
+    .message-content h1, .message-content h2, .message-content h3,
+    .message-content h4, .message-content h5, .message-content h6 {
+      margin: 0.75em 0 0.5em;
+      font-weight: 600;
+    }
+    .message-content table {
+      border-collapse: collapse;
+      margin: 0.5em 0;
+    }
+    .message-content th, .message-content td {
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      padding: 4px 8px;
+    }
+    .dark .message-content th, .dark .message-content td {
+      border-color: rgba(255, 255, 255, 0.1);
     }
     @keyframes msgIn {
       from { opacity: 0; transform: translateY(8px); }
@@ -1682,6 +1746,49 @@
       );
     }
 
+    // ── Message Content Component ──
+    function MessageContent({ content }) {
+      const [html, setHtml] = useState('');
+
+      useEffect(() => {
+        if (!content) {
+          setHtml('');
+          return;
+        }
+
+        // Configure marked options for safe rendering
+        if (window.marked) {
+          window.marked.setOptions({
+            breaks: true,
+            gfm: true,
+            headerIds: false,
+            mangle: false
+          });
+
+          try {
+            // Parse markdown to HTML
+            const parsed = window.marked.parse(content);
+            setHtml(parsed);
+          } catch (err) {
+            // Fallback to plain text if parsing fails
+            console.error('Markdown parsing error:', err);
+            setHtml(content);
+          }
+        } else {
+          // If marked isn't loaded, just display as text
+          setHtml(content);
+        }
+      }, [content]);
+
+      // Render HTML content safely
+      return (
+        <div
+          className="message-content"
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      );
+    }
+
     // ── Chat View ──
     function ThinkingBlock({ thinking }) {
       const [open, setOpen] = useState(true);
@@ -2338,7 +2445,7 @@
                 {showThinking && msg.thinking && (
                   <ThinkingBlock thinking={msg.thinking} />
                 )}
-                {msg.content}
+                <MessageContent content={msg.content} />
                 {msg.images && msg.images.length > 0 && (
                   <div className="msg-images">
                     {msg.images.map((img, idx) => (
