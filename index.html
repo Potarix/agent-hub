@@ -361,13 +361,16 @@
     .completion-indicator {
       display: flex;
       align-items: center;
-      animation: fadeInScale 0.3s ease-out;
+      animation: fadeInScale 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
     }
 
     @keyframes fadeInScale {
       from {
         opacity: 0;
-        transform: scale(0.8);
+        transform: scale(0.5);
+      }
+      50% {
+        transform: scale(1.1);
       }
       to {
         opacity: 1;
@@ -1422,6 +1425,7 @@
       const [editAgent, setEditAgent] = useState(null);
       const [theme, setTheme] = useState('dark');
       const [loadingAgents, setLoadingAgents] = useState(new Set());
+      const [lastActivityTime, setLastActivityTime] = useState({});
 
       const activeAgent = agents.find(a => a.id === activeId);
 
@@ -1498,6 +1502,7 @@
               onSelect={setActiveId}
               onAdd={addAgent}
               onOpenSettings={() => setShowSettings(true)}
+              lastActivityTime={lastActivityTime}
             />
             <div className="main-area">
               {!activeAgent && (
@@ -1522,6 +1527,7 @@
                         return next;
                       });
                     }}
+                    setLastActivityTime={setLastActivityTime}
                   />
                 </div>
               ))}
@@ -1544,7 +1550,14 @@
     }
 
     // ── Sidebar ──
-    function Sidebar({ agents, activeId, statuses, loadingAgents, completionStatus, onSelect, onAdd, onOpenSettings }) {
+    function Sidebar({ agents, activeId, statuses, loadingAgents, completionStatus, onSelect, onAdd, onOpenSettings, lastActivityTime }) {
+      // Sort agents by last activity time (most recent first)
+      const sortedAgents = [...agents].sort((a, b) => {
+        const timeA = lastActivityTime[a.id] || 0;
+        const timeB = lastActivityTime[b.id] || 0;
+        return timeB - timeA;
+      });
+
       return (
         <div className="sidebar">
           <div className="sidebar-header">
@@ -1552,8 +1565,8 @@
             <button className="btn-icon" onClick={onAdd} title="Add agent">+</button>
           </div>
           <div className="agent-list">
-            {agents.length === 0 && <div className="empty-list">No agents yet. Click + to add one.</div>}
-            {agents.map(agent => (
+            {sortedAgents.length === 0 && <div className="empty-list">No agents yet. Click + to add one.</div>}
+            {sortedAgents.map(agent => (
               <div
                 key={agent.id}
                 className={`agent-card ${activeId === agent.id ? 'active' : ''}`}
@@ -1567,7 +1580,7 @@
                     <div className="agent-name">
                       {agent.name}
                       {loadingAgents.has(agent.id) && (
-                        <span className="agent-thinking-indicator" title="Thinking...">
+                        <span className="agent-thinking-indicator" title="Typing">
                           <span /><span /><span />
                         </span>
                       )}
@@ -1731,7 +1744,7 @@
       );
     }
 
-    function ChatView({ agent, isActive, status, messages, setMessages, onUpdateAgent, completionStatus, setCompletionStatus, onLoadingChange }) {
+    function ChatView({ agent, isActive, status, messages, setMessages, onUpdateAgent, completionStatus, setCompletionStatus, onLoadingChange, setLastActivityTime }) {
       const [input, setInput] = useState('');
       const [loading, setLoading] = useState(false);
       const [streamText, setStreamText] = useState('');
@@ -1796,10 +1809,14 @@
           }
           // Mark agent as completed
           setCompletionStatus('completed');
-          // Clear completion status after a few seconds
+          // Update last activity time for this agent
+          if (setLastActivityTime) {
+            setLastActivityTime(prev => ({ ...prev, [agentRef.current.id]: Date.now() }));
+          }
+          // Clear completion status after 30 seconds (like iMessage)
           setTimeout(() => {
             setCompletionStatus(null);
-          }, 5000);
+          }, 30000);
           // Persist Claude Code session ID — use ref for latest agent
           const currentAgent = agentRef.current;
           if (meta?.sessionId && !currentAgent.sessionId && onUpdateAgent) {
@@ -2085,6 +2102,10 @@
         // Generate a unique request ID and start streaming
         const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2);
         activeRequestIdRef.current = requestId;
+        // Update last activity time when sending a message
+        if (setLastActivityTime) {
+          setLastActivityTime(prev => ({ ...prev, [agent.id]: Date.now() }));
+        }
         window.agentHub.chatStream(requestId, buildAgentWithSessionTools(agent), apiMessages);
       };
 
@@ -2267,7 +2288,7 @@
                 </div>
               </div>
             )}
-            {messages.map((msg, i) => (
+            {messages.filter(msg => !msg.content?.includes('is typing...')).map((msg, i) => (
               <div key={i} className={`msg ${msg.role}`}>
                 {showThinking && msg.thinking && (
                   <ThinkingBlock thinking={msg.thinking} />
