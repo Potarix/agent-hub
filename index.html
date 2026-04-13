@@ -1340,29 +1340,6 @@
     <source src="assets/notification.mp3" type="audio/mpeg">
     <source src="assets/imessage-sound.aiff" type="audio/aiff">
   </audio>
-  <!-- Test button for sound -->
-  <button onclick="testSound()" style="position: fixed; bottom: 10px; right: 10px; z-index: 9999; background: #007AFF; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer;">Test Sound</button>
-  <script>
-    function testSound() {
-      const audio = document.getElementById('notificationSound');
-      if (audio) {
-        audio.volume = 1.0;
-        audio.currentTime = 0;
-        const playPromise = audio.play();
-        if (playPromise !== undefined) {
-          playPromise.then(() => {
-            console.log('Sound played successfully');
-          }).catch(error => {
-            console.error('Error playing sound:', error);
-            alert('Error playing sound: ' + error.message);
-          });
-        }
-      } else {
-        console.error('Audio element not found');
-        alert('Audio element not found');
-      }
-    }
-  </script>
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
