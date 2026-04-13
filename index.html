@@ -2054,6 +2054,15 @@
         const offPermRequest = window.agentHub.onPermissionRequest((id, request) => {
           if (cancelled || id !== activeRequestIdRef.current) return;
           setPermRequests(prev => [...prev, { ...request, requestId: id }]);
+
+          // Increment completion status if user is NOT viewing this agent
+          // This shows the notification badge for pending permission requests
+          if (!isActiveRef.current) {
+            setCompletionStatus(prev => {
+              const current = typeof prev === 'number' ? prev : 0;
+              return current + 1;
+            });
+          }
         });
 
         return () => {
