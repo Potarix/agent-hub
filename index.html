@@ -13,67 +13,69 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg-0: #09090f;
-      --bg-1: #0f0f18;
-      --bg-2: #161621;
-      --bg-3: #1e1e2d;
-      --bg-4: #292940;
-      --border: #1f1f32;
-      --border-light: #2e2e48;
-      --text-0: #eeeef4;
-      --text-1: #b8b8cc;
-      --text-2: #6e6e8a;
-      --accent: #7c6aff;
-      --accent-dim: #6454d4;
-      --accent-glow: rgba(124,106,255,0.15);
-      --accent-subtle: rgba(124,106,255,0.08);
-      --green: #34d399;
-      --green-dim: rgba(52,211,153,0.12);
-      --red: #f87171;
-      --red-dim: rgba(248,113,113,0.1);
-      --orange: #fbbf24;
-      --orange-dim: rgba(251,191,36,0.1);
-      --blue: #60a5fa;
+      --bg-0: #1e1e1e;
+      --bg-1: #282828;
+      --bg-2: #323232;
+      --bg-3: #3e3e3e;
+      --bg-4: #4a4a4a;
+      --border: #424242;
+      --border-light: #525252;
+      --text-0: #ececec;
+      --text-1: #c0c0c0;
+      --text-2: #8a8a8a;
+      --accent: #0A84FF;
+      --accent-dim: #006ce6;
+      --accent-glow: rgba(10,132,255,0.15);
+      --accent-subtle: rgba(10,132,255,0.08);
+      --msg-agent-bg: #262628;
+      --green: #34c759;
+      --green-dim: rgba(52,199,89,0.12);
+      --red: #ff3b30;
+      --red-dim: rgba(255,59,48,0.1);
+      --orange: #ff9f0a;
+      --orange-dim: rgba(255,159,10,0.1);
+      --blue: #0a84ff;
       --radius: 10px;
       --radius-sm: 6px;
       --radius-lg: 16px;
-      --shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
-      --shadow-md: 0 4px 16px rgba(0,0,0,0.3);
-      --shadow-lg: 0 12px 40px rgba(0,0,0,0.5);
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.1);
+      --shadow-md: 0 4px 16px rgba(0,0,0,0.2);
+      --shadow-lg: 0 12px 40px rgba(0,0,0,0.4);
       --transition: 0.18s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     html[data-theme="light"],
     html[data-theme="light"] *,
     html.light-theme {
-      --bg-0: #f4f4f8;
-      --bg-1: #ffffff;
-      --bg-2: #f0f0f5;
-      --bg-3: #e6e6ef;
-      --bg-4: #d8d8e4;
-      --border: #e0e0ec;
-      --border-light: #ccccd8;
-      --text-0: #16162a;
-      --text-1: #3e3e58;
-      --text-2: #7a7a96;
-      --accent: #6c5ce7;
-      --accent-dim: #5b4cc9;
-      --accent-glow: rgba(108,92,231,0.12);
-      --accent-subtle: rgba(108,92,231,0.06);
-      --green: #059669;
-      --green-dim: rgba(5,150,105,0.08);
-      --red: #dc2626;
-      --red-dim: rgba(220,38,38,0.06);
-      --orange: #d97706;
-      --orange-dim: rgba(217,119,6,0.08);
-      --blue: #2563eb;
+      --bg-0: #ffffff;
+      --bg-1: #f5f5f7;
+      --bg-2: #ebebeb;
+      --bg-3: #e0e0e0;
+      --bg-4: #d6d6d6;
+      --border: #e5e5ea;
+      --border-light: #d1d1d6;
+      --text-0: #000000;
+      --text-1: #3a3a3c;
+      --text-2: #8e8e93;
+      --accent: #007aff;
+      --accent-dim: #006ce6;
+      --accent-glow: rgba(0,122,255,0.12);
+      --accent-subtle: rgba(0,122,255,0.06);
+      --msg-agent-bg: #e9e9eb;
+      --green: #34C759;
+      --green-dim: rgba(52,199,89,0.08);
+      --red: #FF3B30;
+      --red-dim: rgba(255,59,48,0.06);
+      --orange: #FF9F0A;
+      --orange-dim: rgba(255,159,10,0.08);
+      --blue: #007AFF;
       --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
       --shadow-md: 0 4px 16px rgba(0,0,0,0.06);
       --shadow-lg: 0 12px 40px rgba(0,0,0,0.1);
     }
 
     body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
       background: var(--bg-0);
       color: var(--text-0);
       height: 100vh;
@@ -91,9 +93,10 @@
     #root { height: 100vh; display: flex; flex-direction: column; }
 
     .titlebar {
-      height: 40px;
+      height: 44px;
       display: flex;
       align-items: center;
+      justify-content: center;
       padding: 0 80px;
       background: var(--bg-1);
       border-bottom: 1px solid var(--border);
@@ -134,11 +137,12 @@
     }
 
     .sidebar-header {
-      padding: 16px 16px 14px;
+      padding: 16px;
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 12px;
     }
 
     .sidebar-header h2 {
@@ -167,32 +171,32 @@
     .agent-list {
       flex: 1;
       overflow-y: auto;
-      padding: 8px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
     }
 
     .agent-card {
-      padding: 10px 12px;
+      padding: 12px;
       border-radius: var(--radius);
       cursor: pointer;
       transition: all var(--transition);
-      margin-bottom: 2px;
       border: 1px solid transparent;
       position: relative;
     }
     .agent-card:hover { background: var(--bg-2); }
     .agent-card.active {
-      background: var(--accent-subtle);
-      border-color: rgba(124,106,255,0.2);
-    }
-    .agent-card.active::before {
-      content: '';
-      position: absolute;
-      left: 0;
-      top: 8px;
-      bottom: 8px;
-      width: 3px;
-      border-radius: 0 3px 3px 0;
       background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+    }
+    .agent-card.active .agent-provider,
+    .agent-card.active .agent-name {
+      color: white;
+    }
+    .agent-card.active .agent-avatar {
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.2) inset;
     }
 
     .agent-card-header {
@@ -203,20 +207,45 @@
 
     .agent-avatar {
       width: 36px; height: 36px;
-      border-radius: 10px;
+      border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
       font-size: 13px;
-      font-weight: 700;
+      font-weight: 500;
       flex-shrink: 0;
-      letter-spacing: -0.5px;
-      box-shadow: var(--shadow-sm);
+      letter-spacing: 0.5px;
+      box-shadow: none;
     }
 
-    .agent-info { flex: 1; min-width: 0; }
-    .agent-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -0.1px; }
-    .agent-provider { font-size: 11px; color: var(--text-2); margin-top: 1px; }
+    .agent-info {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .agent-name {
+      font-size: 14px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      letter-spacing: -0.1px;
+      line-height: 1.3;
+      min-width: 0;
+    }
+    .agent-name-text {
+      white-space: nowrap;
+      overflow: hidden;
+      flex-shrink: 1;
+      min-width: 0;
+    }
+    .agent-provider {
+      font-size: 12px;
+      color: var(--text-2);
+      line-height: 1.3;
+    }
 
     .status-dot {
       width: 8px; height: 8px;
@@ -300,18 +329,24 @@
     .dash-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 12px;
-      max-width: 520px;
+      gap: 16px;
+      max-width: 480px;
       width: 100%;
-      margin-top: 16px;
+      margin-top: 24px;
     }
 
     .dash-stat {
       background: var(--bg-1);
       border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 20px 16px;
+      border-radius: 14px;
+      padding: 24px 16px;
       text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 100px;
       transition: all var(--transition);
     }
     .dash-stat:hover { border-color: var(--border-light); transform: translateY(-1px); box-shadow: var(--shadow-md); }
@@ -320,14 +355,46 @@
 
     /* ── Chat ── */
     .chat-header {
-      padding: 14px 20px;
+      padding: 12px 20px;
       border-bottom: 1px solid var(--border);
       display: flex;
+      flex-direction: column;
       align-items: center;
-      gap: 12px;
-      background: var(--bg-1);
+      justify-content: center;
+      gap: 4px;
+      background: rgba(var(--bg-1), 0.85); /* fallback */
+      background: color-mix(in srgb, var(--bg-1) 85%, transparent);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      min-height: 60px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
     }
-    .chat-header .agent-name { font-size: 15px; font-weight: 600; letter-spacing: -0.2px; }
+    .chat-header .agent-name { font-size: 13px; font-weight: 600; letter-spacing: -0.2px; }
+    .chat-header .agent-avatar { width: 34px !important; height: 34px !important; }
+    .chat-header-top { display: flex; align-items: center; justify-content: center; width: 100%; position: relative; }
+    .chat-header-actions { position: absolute; right: 0; top: 0; display: flex; gap: 8px; }
+
+    .completion-indicator {
+      display: flex;
+      align-items: center;
+      animation: fadeInScale 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    @keyframes fadeInScale {
+      from {
+        opacity: 0;
+        transform: scale(0.5);
+      }
+      50% {
+        transform: scale(1.1);
+      }
+      to {
+        opacity: 1;
+        transform: scale(1);
+      }
+    }
 
     .btn-thinking-toggle {
       display: flex;
@@ -355,14 +422,14 @@
     }
 
     .msg {
-      max-width: 72%;
-      padding: 12px 16px;
-      border-radius: 16px;
-      font-size: 14px;
-      line-height: 1.65;
+      max-width: 75%;
+      padding: 10px 14px;
+      font-size: 15px;
+      line-height: 1.4;
       white-space: pre-wrap;
       word-break: break-word;
       animation: msgIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      position: relative;
     }
     @keyframes msgIn {
       from { opacity: 0; transform: translateY(8px); }
@@ -371,22 +438,21 @@
 
     .msg.user {
       align-self: flex-end;
-      background: linear-gradient(135deg, var(--accent), #6454d4);
+      background: var(--accent);
       color: white;
-      border-bottom-right-radius: 6px;
-      box-shadow: 0 2px 12px rgba(124,106,255,0.2);
+      border-radius: 18px 18px 4px 18px;
     }
     .msg.assistant {
       align-self: flex-start;
-      background: var(--bg-1);
-      border: 1px solid var(--border);
-      border-bottom-left-radius: 6px;
-      box-shadow: var(--shadow-sm);
+      background: var(--msg-agent-bg);
+      color: var(--text-0);
+      border-radius: 18px 18px 18px 4px;
+      border: 1px solid rgba(0,0,0,0.05); /* very subtle border to help separation */
     }
     .msg.assistant code {
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 12px;
-      background: var(--bg-3);
+      font-family: "SF Mono", Menlo, Consolas, Monaco, monospace;
+      font-size: 13px;
+      background: var(--bg-2);
       padding: 2px 6px;
       border-radius: 5px;
       border: 1px solid var(--border);
@@ -445,6 +511,25 @@
       border-radius: 10px;
     }
 
+    .msg-images {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .msg-image {
+      max-width: 200px;
+      max-height: 200px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+
+    .msg-image:hover {
+      transform: scale(1.05);
+    }
+
     .typing-indicator {
       align-self: flex-start;
       display: flex;
@@ -481,6 +566,29 @@
     }
     .agent-thinking-indicator span:nth-child(2) { animation-delay: 0.16s; }
     .agent-thinking-indicator span:nth-child(3) { animation-delay: 0.32s; }
+
+    /* Agent completion badge in sidebar */
+    .agent-completion-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 9px;
+      background-color: var(--blue);
+      color: white;
+      font-size: 11px;
+      font-weight: 600;
+      margin-left: 8px;
+      vertical-align: middle;
+      animation: fadeInScale 0.3s ease-out;
+      box-shadow: var(--shadow-sm);
+    }
+    .agent-card.active .agent-completion-badge {
+      background-color: white;
+      color: var(--accent);
+    }
 
     .streaming-indicator {
       display: inline-flex;
@@ -675,8 +783,9 @@
     }
     .permission-banner-actions {
       display: flex;
-      gap: 8px;
-      margin-top: 12px;
+      align-items: center;
+      gap: 10px;
+      margin-top: 16px;
       flex-wrap: wrap;
     }
     .permission-banner-actions button {
@@ -715,7 +824,7 @@
     }
 
     .chat-input-bar {
-      padding: 12px 16px 14px;
+      padding: 16px;
       border-top: 1px solid var(--border);
       background: var(--bg-1);
       position: relative;
@@ -725,39 +834,37 @@
       align-items: flex-end;
       gap: 8px;
       border: 1px solid var(--border);
-      border-radius: 14px;
-      background: var(--bg-2);
-      padding: 8px 10px 8px 16px;
+      border-radius: 20px;
+      background: var(--bg-1);
+      padding: 6px 6px 6px 14px;
       transition: all var(--transition);
       position: relative;
     }
     .chat-input-wrap:focus-within {
-      border-color: rgba(124,106,255,0.4);
-      box-shadow: 0 0 0 3px var(--accent-glow);
-      background: var(--bg-1);
+      border-color: var(--accent);
     }
 
     .chat-input {
       flex: 1;
-      padding: 4px 0;
+      padding: 6px 0;
       border: none;
       background: transparent;
       color: var(--text-0);
-      font-size: 14px;
+      font-size: 15px;
       line-height: 1.5;
       outline: none;
       resize: none;
-      min-height: 21px;
+      min-height: 22px;
       max-height: 200px;
       overflow-y: auto;
     }
     .chat-input::placeholder { color: var(--text-2); }
 
     .btn-send {
-      width: 32px;
-      height: 32px;
+      width: 28px;
+      height: 28px;
       flex-shrink: 0;
-      border-radius: 9px;
+      border-radius: 50%;
       border: none;
       background: var(--accent);
       color: white;
@@ -766,11 +873,113 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 2px 8px rgba(124,106,255,0.25);
+      margin-bottom: 2px;
     }
-    .btn-send:hover { background: var(--accent-dim); transform: scale(1.04); }
-    .btn-send:active { transform: scale(0.96); }
-    .btn-send:disabled { opacity: 0.25; cursor: not-allowed; box-shadow: none; transform: none; }
+    .btn-send:hover { background: var(--accent-dim); }
+    .btn-send:active { opacity: 0.8; }
+    .btn-send:disabled { opacity: 0.25; cursor: not-allowed; }
+
+    .btn-attach {
+      width: 24px;
+      height: 24px;
+      flex-shrink: 0;
+      border-radius: 50%;
+      border: none;
+      background: var(--bg-3);
+      color: var(--text-2);
+      font-size: 18px;
+      cursor: pointer;
+      transition: all var(--transition);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-right: 4px;
+      margin-bottom: 4px;
+    }
+    .btn-attach:hover { background: var(--border-light); color: var(--text-1); }
+    .btn-attach:active { opacity: 0.8; }
+
+    .selected-images {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+
+    .image-preview {
+      position: relative;
+      width: 80px;
+      height: 80px;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+
+    .image-preview img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .remove-image {
+      position: absolute;
+      top: 2px;
+      right: 2px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: rgba(0, 0, 0, 0.7);
+      color: white;
+      border: none;
+      cursor: pointer;
+      font-size: 16px;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .remove-image:hover {
+      background: rgba(0, 0, 0, 0.9);
+    }
+
+    .drop-zone {
+      position: fixed;
+      inset: 0;
+      background: rgba(59, 130, 246, 0.15);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      pointer-events: none;
+    }
+
+    .drop-zone.active {
+      display: flex;
+    }
+
+    .drop-zone-message {
+      font-size: 24px;
+      font-weight: 600;
+      color: #3b82f6;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      background: var(--bg-0);
+      padding: 32px 48px;
+      border-radius: 16px;
+      border: 3px dashed #3b82f6;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+    }
+
+    .drop-zone-icon {
+      width: 64px;
+      height: 64px;
+      opacity: 0.9;
+    }
 
     /* ── Settings modal ── */
     .modal-overlay {
@@ -911,12 +1120,12 @@
     ::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
 
     /* ── Provider colors ── */
-    .provider-openclaws { background: linear-gradient(135deg, #f97316, #ea580c); color: white; }
-    .provider-openai { background: linear-gradient(135deg, #10a37f, #0d8c6d); color: white; }
-    .provider-claude-code { background: linear-gradient(135deg, #f59e0b, #d97706); color: #1a1a2e; }
-    .provider-hermes { background: linear-gradient(135deg, #a855f7, #7c3aed); color: white; }
-    .provider-codex { background: linear-gradient(135deg, #10a37f, #0d8c6d); color: white; }
-    .provider-generic { background: linear-gradient(135deg, var(--blue), #3b82f6); color: white; }
+    .provider-openclaws { background: #FF9500; color: white; }
+    .provider-openai { background: #34C759; color: white; }
+    .provider-claude-code { background: #FFCC00; color: #000; }
+    .provider-hermes { background: #AF52DE; color: white; }
+    .provider-codex { background: #34C759; color: white; }
+    .provider-generic { background: #007AFF; color: white; }
 
     /* ── Slash Command Palette ── */
     .slash-palette {
@@ -1103,6 +1312,17 @@
       localStorage.setItem('agent-hub-chats', JSON.stringify(chats));
     }
 
+    function loadLastActivityTime() {
+      try {
+        const saved = localStorage.getItem('agent-hub-activity-times');
+        return saved ? JSON.parse(saved) : {};
+      } catch { return {}; }
+    }
+
+    function saveLastActivityTime(times) {
+      localStorage.setItem('agent-hub-activity-times', JSON.stringify(times));
+    }
+
     // ── Auth Login Button (in-app, no terminal) ──
     function AuthLoginButton({ agent, onSuccess }) {
       const [authState, setAuthState] = useState('idle'); // idle | logging-in | waiting-for-code | success | error
@@ -1241,15 +1461,18 @@
       const [activeId, setActiveId] = useState(null);
       const [chats, setChats] = useState(loadChats);
       const [statuses, setStatuses] = useState({});
+      const [completionStatus, setCompletionStatus] = useState({});
       const [showSettings, setShowSettings] = useState(false);
       const [editAgent, setEditAgent] = useState(null);
       const [theme, setTheme] = useState('dark');
       const [loadingAgents, setLoadingAgents] = useState(new Set());
+      const [lastActivityTime, setLastActivityTime] = useState(loadLastActivityTime);
 
       const activeAgent = agents.find(a => a.id === activeId);
 
       useEffect(() => { saveAgents(agents); }, [agents]);
       useEffect(() => { saveChats(chats); }, [chats]);
+      useEffect(() => { saveLastActivityTime(lastActivityTime); }, [lastActivityTime]);
 
       // Sync theme with macOS system appearance
       useEffect(() => {
@@ -1317,9 +1540,15 @@
               activeId={activeId}
               statuses={statuses}
               loadingAgents={loadingAgents}
-              onSelect={setActiveId}
+              completionStatus={completionStatus}
+              onSelect={(agentId) => {
+                setActiveId(agentId);
+                // Clear completion status when clicking into the agent's thread
+                setCompletionStatus(prev => ({ ...prev, [agentId]: null }));
+              }}
               onAdd={addAgent}
               onOpenSettings={() => setShowSettings(true)}
+              lastActivityTime={lastActivityTime}
             />
             <div className="main-area">
               {!activeAgent && (
@@ -1329,10 +1558,13 @@
                 <div key={ag.id} style={{ display: activeId === ag.id ? 'contents' : 'none' }}>
                   <ChatView
                     agent={ag}
+                    isActive={activeId === ag.id}
                     status={statuses[ag.id]}
                     messages={chats[ag.id] || []}
                     setMessages={(msgs) => setChats(prev => ({ ...prev, [ag.id]: typeof msgs === 'function' ? msgs(prev[ag.id] || []) : msgs }))}
                     onUpdateAgent={updateAgent}
+                    completionStatus={completionStatus[ag.id]}
+                    setCompletionStatus={(status) => setCompletionStatus(prev => ({ ...prev, [ag.id]: typeof status === 'function' ? status(prev[ag.id]) : status }))}
                     onLoadingChange={(isLoading) => {
                       setLoadingAgents(prev => {
                         const next = new Set(prev);
@@ -1341,6 +1573,7 @@
                         return next;
                       });
                     }}
+                    setLastActivityTime={setLastActivityTime}
                   />
                 </div>
               ))}
@@ -1363,7 +1596,14 @@
     }
 
     // ── Sidebar ──
-    function Sidebar({ agents, activeId, statuses, loadingAgents, onSelect, onAdd, onOpenSettings }) {
+    function Sidebar({ agents, activeId, statuses, loadingAgents, completionStatus, onSelect, onAdd, onOpenSettings, lastActivityTime }) {
+      // Sort agents by last activity time (most recent first)
+      const sortedAgents = [...agents].sort((a, b) => {
+        const timeA = lastActivityTime[a.id] || 0;
+        const timeB = lastActivityTime[b.id] || 0;
+        return timeB - timeA;
+      });
+
       return (
         <div className="sidebar">
           <div className="sidebar-header">
@@ -1371,8 +1611,8 @@
             <button className="btn-icon" onClick={onAdd} title="Add agent">+</button>
           </div>
           <div className="agent-list">
-            {agents.length === 0 && <div className="empty-list">No agents yet. Click + to add one.</div>}
-            {agents.map(agent => (
+            {sortedAgents.length === 0 && <div className="empty-list">No agents yet. Click + to add one.</div>}
+            {sortedAgents.map(agent => (
               <div
                 key={agent.id}
                 className={`agent-card ${activeId === agent.id ? 'active' : ''}`}
@@ -1384,10 +1624,15 @@
                   </div>
                   <div className="agent-info">
                     <div className="agent-name">
-                      {agent.name}
+                      <span className="agent-name-text">{agent.name}</span>
                       {loadingAgents.has(agent.id) && (
-                        <span className="agent-thinking-indicator" title="Thinking...">
+                        <span className="agent-thinking-indicator" title="Typing">
                           <span /><span /><span />
+                        </span>
+                      )}
+                      {typeof completionStatus[agent.id] === 'number' && completionStatus[agent.id] > 0 && (
+                        <span className="agent-completion-badge" title="Unread Messages">
+                          {completionStatus[agent.id]}
                         </span>
                       )}
                     </div>
@@ -1542,7 +1787,7 @@
       );
     }
 
-    function ChatView({ agent, status, messages, setMessages, onUpdateAgent, onLoadingChange }) {
+    function ChatView({ agent, isActive, status, messages, setMessages, onUpdateAgent, completionStatus, setCompletionStatus, onLoadingChange, setLastActivityTime }) {
       const [input, setInput] = useState('');
       const [loading, setLoading] = useState(false);
       const [streamText, setStreamText] = useState('');
@@ -1557,19 +1802,25 @@
       const [showSlash, setShowSlash] = useState(false);
       const [slashIdx, setSlashIdx] = useState(0);
       const [showThinking, setShowThinking] = useState(true);
+      const [selectedImages, setSelectedImages] = useState([]);
+      const [isDragging, setIsDragging] = useState(false);
       const bottomRef = useRef(null);
       const inputRef = useRef(null);
+      const chatAreaRef = useRef(null);
       const streamTextRef = useRef('');
       const streamThinkingRef = useRef('');
+      const dragCounter = useRef(0);
       const toolUsesRef = useRef([]);
       const activeRequestIdRef = useRef(null);
-      // Keep a ref to the latest agent so stream callbacks never use a stale closure
+      // Keep refs to the latest agent/isActive so stream callbacks never use a stale closure
       const agentRef = useRef(agent);
       agentRef.current = agent;
+      const isActiveRef = useRef(isActive);
+      isActiveRef.current = isActive;
 
       useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }, [messages, streamText, streamThinking, permRequests]);
+      }, [messages, streamText, streamThinking, permRequests, agent.id]);
 
       useEffect(() => {
         inputRef.current?.focus();
@@ -1594,6 +1845,7 @@
 
         const offDone = window.agentHub.onStreamDone((id, meta) => {
           if (cancelled || id !== activeRequestIdRef.current) return;
+
           const content = streamTextRef.current;
           const thinking = streamThinkingRef.current || null;
           if (content) {
@@ -1601,11 +1853,26 @@
             if (thinking) msg.thinking = thinking;
             setMessages(prev => [...prev, msg]);
           }
+
+          // Only increment completion status if user is NOT viewing this agent
+          // If they're already viewing it, they can see the messages in real-time
+          if (!isActiveRef.current) {
+            setCompletionStatus(prev => {
+              const current = typeof prev === 'number' ? prev : 0;
+              return current + 1;
+            });
+          }
+
+          // Update last activity time for this agent
+          if (setLastActivityTime) {
+            setLastActivityTime(prev => ({ ...prev, [agentRef.current.id]: Date.now() }));
+          }
           // Persist Claude Code session ID — use ref for latest agent
           const currentAgent = agentRef.current;
           if (meta?.sessionId && !currentAgent.sessionId && onUpdateAgent) {
             onUpdateAgent({ ...currentAgent, sessionId: meta.sessionId });
           }
+
           streamTextRef.current = '';
           streamThinkingRef.current = '';
           toolUsesRef.current = [];
@@ -1749,9 +2016,98 @@
         return { ...baseAgent, allowedTools: merged };
       };
 
+      // Process image files (used by both file input and drag/drop)
+      const processImageFiles = (files) => {
+        const imageFiles = files.filter(file => file.type.startsWith('image/'));
+
+        imageFiles.forEach(file => {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const base64 = e.target.result.split(',')[1]; // Remove data:image/...;base64, prefix
+            setSelectedImages(prev => [...prev, {
+              name: file.name,
+              mimeType: file.type,
+              base64: base64,
+              preview: e.target.result
+            }]);
+          };
+          reader.readAsDataURL(file);
+        });
+      };
+
+      // Handle image selection
+      const handleImageSelect = (event) => {
+        const files = Array.from(event.target.files);
+        processImageFiles(files);
+        // Reset the input
+        event.target.value = '';
+      };
+
+      const removeImage = (index) => {
+        setSelectedImages(prev => prev.filter((_, i) => i !== index));
+      };
+
+      // Drag and drop handlers
+      const handleDragEnter = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter.current++;
+        if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+          const hasImages = Array.from(e.dataTransfer.items).some(item => item.type.startsWith('image/'));
+          if (hasImages) {
+            setIsDragging(true);
+          }
+        }
+      };
+
+      const handleDragLeave = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter.current--;
+        if (dragCounter.current === 0) {
+          setIsDragging(false);
+        }
+      };
+
+      const handleDragOver = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      };
+
+      const handleDrop = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragging(false);
+        dragCounter.current = 0;
+
+        const files = Array.from(e.dataTransfer.files);
+        processImageFiles(files);
+      };
+
+      // Add drag and drop listeners to the entire document for the active chat only.
+      useEffect(() => {
+        if (!isActive) {
+          setIsDragging(false);
+          dragCounter.current = 0;
+          return;
+        }
+
+        document.addEventListener('dragenter', handleDragEnter);
+        document.addEventListener('dragleave', handleDragLeave);
+        document.addEventListener('dragover', handleDragOver);
+        document.addEventListener('drop', handleDrop);
+
+        return () => {
+          document.removeEventListener('dragenter', handleDragEnter);
+          document.removeEventListener('dragleave', handleDragLeave);
+          document.removeEventListener('dragover', handleDragOver);
+          document.removeEventListener('drop', handleDrop);
+        };
+      }, [isActive]);
+
       const sendMessage = () => {
         const text = input.trim();
-        if (!text) return;
+        if (!text && selectedImages.length === 0) return;
 
         // If it's a slash command, route it (still sequential)
         if (text.startsWith('/')) {
@@ -1760,9 +2116,19 @@
           return;
         }
 
-        const userMsg = { role: 'user', content: text };
+        const userMsg = { role: 'user', content: text || 'Please analyze these images' };
+
+        // Add images to message if any are selected
+        if (selectedImages.length > 0) {
+          userMsg.images = selectedImages.map(img => ({
+            base64: img.base64,
+            mimeType: img.mimeType
+          }));
+        }
+
         setMessages(prev => [...prev, userMsg]);
         setInput('');
+        setSelectedImages([]); // Clear selected images after sending
         setLastUserMessage(text);
         if (inputRef.current) inputRef.current.style.height = 'auto';
 
@@ -1787,6 +2153,10 @@
         // Generate a unique request ID and start streaming
         const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2);
         activeRequestIdRef.current = requestId;
+        // Update last activity time when sending a message
+        if (setLastActivityTime) {
+          setLastActivityTime(prev => ({ ...prev, [agent.id]: Date.now() }));
+        }
         window.agentHub.chatStream(requestId, buildAgentWithSessionTools(agent), apiMessages);
       };
 
@@ -1914,28 +2284,42 @@
 
       return (
         <>
-          <div className="chat-header">
-            <div className={`agent-avatar ${agent.providerClass}`} style={{ width: 34, height: 34, fontSize: 12 }}>
-              {agent.emoji}
+          {/* Global drop zone overlay */}
+          <div className={`drop-zone ${isDragging ? 'active' : ''}`} style={{ position: 'fixed', inset: 0, zIndex: 9999 }}>
+            <div className="drop-zone-message">
+              <svg className="drop-zone-icon" viewBox="0 0 24 24" fill="none">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M7 10l5 5 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              <span>Drop images anywhere to upload</span>
             </div>
-            <div style={{ flex: 1 }}>
-              <div className="agent-name">{agent.name}</div>
-              <div className="agent-provider" style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span className={`status-dot ${status || 'offline'}`} style={{ width: 6, height: 6 }} />
-                {status === 'online' ? 'Connected' : status === 'checking' ? 'Checking...' : 'Disconnected'}
+          </div>
+          <div className="chat-header">
+            <div className="chat-header-top">
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                <div className={`agent-avatar ${agent.providerClass}`} style={{ width: 34, height: 34, fontSize: 12 }}>
+                  {agent.emoji}
+                </div>
+                <div className="agent-name">{agent.name}</div>
+                <div className="agent-provider" style={{ fontSize: 10, display: 'flex', alignItems: 'center', gap: 4, opacity: 0.8 }}>
+                  <span className={`status-dot ${status || 'offline'}`} style={{ width: 6, height: 6 }} />
+                  {status === 'online' ? 'Connected' : status === 'checking' ? 'Checking...' : 'Disconnected'}
+                </div>
+              </div>
+              <div className="chat-header-actions">
+                <button
+                  className={`btn-thinking-toggle ${showThinking ? 'active' : ''}`}
+                  onClick={() => setShowThinking(t => !t)}
+                  title={showThinking ? 'Hide thinking' : 'Show thinking'}
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 1.5a4.5 4.5 0 0 0-3.2 7.6c.5.5.7 1.1.7 1.9v.5h5v-.5c0-.8.3-1.4.7-1.9A4.5 4.5 0 0 0 8 1.5zM6 13h4v.5a2 2 0 0 1-4 0V13z" fill="currentColor"/></svg>
+                </button>
               </div>
             </div>
-            <button
-              className={`btn-thinking-toggle ${showThinking ? 'active' : ''}`}
-              onClick={() => setShowThinking(t => !t)}
-              title={showThinking ? 'Hide thinking' : 'Show thinking'}
-            >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1.5a4.5 4.5 0 0 0-3.2 7.6c.5.5.7 1.1.7 1.9v.5h5v-.5c0-.8.3-1.4.7-1.9A4.5 4.5 0 0 0 8 1.5zM6 13h4v.5a2 2 0 0 1-4 0V13z" fill="currentColor"/></svg>
-              <span style={{ fontSize: 11 }}>Thinking</span>
-            </button>
           </div>
 
-          <div className="chat-messages">
+          <div className="chat-messages" ref={chatAreaRef} style={{ position: 'relative' }}>
             {messages.length === 0 && !loading && (
               <div className="chat-empty">
                 <div className="chat-empty-icon">
@@ -1949,12 +2333,24 @@
                 </div>
               </div>
             )}
-            {messages.map((msg, i) => (
+            {messages.filter(msg => !msg.content?.includes('is typing...')).map((msg, i) => (
               <div key={i} className={`msg ${msg.role}`}>
                 {showThinking && msg.thinking && (
                   <ThinkingBlock thinking={msg.thinking} />
                 )}
                 {msg.content}
+                {msg.images && msg.images.length > 0 && (
+                  <div className="msg-images">
+                    {msg.images.map((img, idx) => (
+                      <img
+                        key={idx}
+                        src={`data:${img.mimeType};base64,${img.base64}`}
+                        alt=""
+                        className="msg-image"
+                      />
+                    ))}
+                  </div>
+                )}
                 {msg.role === 'error' && (msg.content.includes('not authenticated') || msg.content.includes('OAuth') || msg.content.includes('auth') || msg.content.includes('setup')) && (
                   <AuthLoginButton agent={agent} onSuccess={() => {
                     setMessages(prev => [...prev, { role: 'system', content: 'Authenticated! You can now send messages.' }]);
@@ -2007,6 +2403,11 @@
                 onDismiss={handleDismissDenials}
               />
             )}
+            {completionStatus && typeof completionStatus === 'number' && completionStatus > 0 && !loading && messages.length > 0 && (
+              <div style={{ alignSelf: messages[messages.length - 1].role === 'user' ? 'flex-end' : 'flex-start', fontSize: 11, color: 'var(--text-2)', margin: '-4px 16px 8px 16px' }}>
+                Delivered
+              </div>
+            )}
             <div ref={bottomRef} />
           </div>
 
@@ -2026,6 +2427,16 @@
                 ))}
               </div>
             )}
+            {selectedImages.length > 0 && (
+              <div className="selected-images">
+                {selectedImages.map((img, idx) => (
+                  <div key={idx} className="image-preview">
+                    <img src={img.preview} alt={img.name} />
+                    <button className="remove-image" onClick={() => removeImage(idx)}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="chat-input-wrap">
               <textarea
                 ref={inputRef}
@@ -2041,8 +2452,20 @@
                 }}
                 onKeyDown={onKeyDown}
               />
-              <button className="btn-send" onClick={sendMessage} disabled={!input.trim()}>
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3l5 5h-3.5v5h-3V8H3l5-5z" fill="currentColor"/></svg>
+              <label className="btn-attach">
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  style={{ display: 'none' }}
+                  onChange={handleImageSelect}
+                />
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                  <path d="M8 2v12M2 8h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                </svg>
+              </label>
+              <button className="btn-send" onClick={sendMessage} disabled={!input.trim() && selectedImages.length === 0}>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 3l5 5h-3.5v5h-3V8H3l5-5z" fill="currentColor"/></svg>
               </button>
             </div>
           </div>

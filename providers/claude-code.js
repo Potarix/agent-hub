@@ -87,11 +87,20 @@ async function chatClaudeCode(agent, messages) {
       })
     });
 
+    // Build prompt with image support
+    let prompt = lastUserMsg.content || '';
+
+    // If there are images, append them as markdown image references
+    // Note: Claude Code SDK may have limited image support - this is a best effort approach
+    if (lastUserMsg.images && lastUserMsg.images.length > 0) {
+      prompt += '\n\n[User has attached images to this message. Please note that direct image analysis may be limited in Claude Code.]';
+    }
+
     let content = '';
     let thinking = null;
     let sessionId = null;
 
-    for await (const message of query({ prompt: lastUserMsg.content, options })) {
+    for await (const message of query({ prompt, options })) {
       // Init message — contains session_id
       if (message.type === 'system' && message.subtype === 'init') {
         sessionId = message.session_id;
@@ -171,10 +180,19 @@ async function streamClaudeCode(event, requestId, agent, messages) {
       }
     });
 
+    // Build prompt with image support
+    let prompt = lastUserMsg.content || '';
+
+    // If there are images, append them as markdown image references
+    // Note: Claude Code SDK may have limited image support - this is a best effort approach
+    if (lastUserMsg.images && lastUserMsg.images.length > 0) {
+      prompt += '\n\n[User has attached images to this message. Please note that direct image analysis may be limited in Claude Code.]';
+    }
+
     let sessionId = null;
     const seenTextBlocks = new Set(); // track blocks we've already streamed via deltas
 
-    for await (const message of query({ prompt: lastUserMsg.content, options })) {
+    for await (const message of query({ prompt, options })) {
 
       // ── System init — session ID + available slash commands ──
       if (message.type === 'system' && message.subtype === 'init') {

@@ -233,7 +233,7 @@ function createCodexEventForwarder(event, requestId) {
 
 // ── SDK-based streaming/chat ──
 
-async function streamCodexWithAgentsSDK(event, requestId, agent, prompt) {
+async function streamCodexWithAgentsSDK(event, requestId, agent, userMsg) {
   const apiKey = getCodexApiKey(agent);
   if (!apiKey) return false;
 
@@ -241,6 +241,16 @@ async function streamCodexWithAgentsSDK(event, requestId, agent, prompt) {
   const { codexTool } = await getOpenAICodexToolSDK();
 
   setDefaultOpenAIKey(apiKey);
+
+  // Build prompt with image support
+  let prompt = typeof userMsg === 'string' ? userMsg : userMsg.content || '';
+
+  // If there are images, create multi-part content
+  if (typeof userMsg === 'object' && userMsg.images && userMsg.images.length > 0) {
+    // For OpenAI Agents SDK, we might need to pass images differently
+    // For now, we'll add a note about attached images
+    prompt += '\n\n[User has attached images to this message]';
+  }
 
   const abortController = new AbortController();
   activeClaudeProcs.set(requestId, {
@@ -305,12 +315,20 @@ async function streamCodexWithAgentsSDK(event, requestId, agent, prompt) {
   }
 }
 
-async function streamCodexWithCodexSDK(event, requestId, agent, prompt) {
+async function streamCodexWithCodexSDK(event, requestId, agent, userMsg) {
   const { Codex } = await getCodexSDK();
   const apiKey = getCodexApiKey(agent);
   const codex = new Codex(buildCodexSDKOptions(agent, apiKey));
   const threadOptions = buildCodexThreadOptions(agent);
   const thread = agent.sessionId ? codex.resumeThread(agent.sessionId, threadOptions) : codex.startThread(threadOptions);
+
+  // Build prompt with image support
+  let prompt = typeof userMsg === 'string' ? userMsg : userMsg.content || '';
+
+  // If there are images, add a note about them
+  if (typeof userMsg === 'object' && userMsg.images && userMsg.images.length > 0) {
+    prompt += '\n\n[User has attached images to this message]';
+  }
   const abortController = new AbortController();
   const forwarder = createCodexEventForwarder(event, requestId);
 
@@ -329,12 +347,21 @@ async function streamCodexWithCodexSDK(event, requestId, agent, prompt) {
   }
 }
 
-async function chatCodexWithCodexSDK(agent, prompt) {
+async function chatCodexWithCodexSDK(agent, userMsg) {
   const { Codex } = await getCodexSDK();
   const apiKey = getCodexApiKey(agent);
   const codex = new Codex(buildCodexSDKOptions(agent, apiKey));
   const threadOptions = buildCodexThreadOptions(agent);
   const thread = agent.sessionId ? codex.resumeThread(agent.sessionId, threadOptions) : codex.startThread(threadOptions);
+
+  // Build prompt with image support
+  let prompt = typeof userMsg === 'string' ? userMsg : userMsg.content || '';
+
+  // If there are images, add a note about them
+  if (typeof userMsg === 'object' && userMsg.images && userMsg.images.length > 0) {
+    prompt += '\n\n[User has attached images to this message]';
+  }
+
   const turn = await thread.run(prompt);
   return { content: turn.finalResponse || '', sessionId: thread.id, usage: turn.usage };
 }
@@ -350,10 +377,10 @@ async function streamCodexLocal(event, requestId, agent, messages) {
 
   if (agent.useCodexSDK !== false) {
     try {
-      const usedAgentsSDK = await streamCodexWithAgentsSDK(event, requestId, agent, lastUserMsg.content);
+      const usedAgentsSDK = await streamCodexWithAgentsSDK(event, requestId, agent, lastUserMsg);
       if (usedAgentsSDK) return;
 
-      await streamCodexWithCodexSDK(event, requestId, agent, lastUserMsg.content);
+      await streamCodexWithCodexSDK(event, requestId, agent, lastUserMsg);
       return;
     } catch (err) {
       activeClaudeProcs.delete(requestId);
@@ -521,7 +548,7 @@ async function chatCodexLocal(agent, messages) {
 
   if (agent.useCodexSDK !== false) {
     try {
-      return await chatCodexWithCodexSDK(agent, lastUserMsg.content);
+      return await chatCodexWithCodexSDK(agent, lastUserMsg);
     } catch (err) {
       const msg = err.message || '';
       if (msg.includes('401') || msg.includes('authentication') || msg.includes('not authenticated')) {
