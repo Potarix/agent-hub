@@ -2342,7 +2342,7 @@
         if (!reqId) return;
         window.agentHub.sendPermissionResponse(reqId, request.toolUseId, {
           behavior: 'allow',
-          updated_input: request.input,
+          updatedInput: request.input,
         });
         setResolvedPerms(prev => ({ ...prev, [request.toolUseId]: 'approved' }));
       };
