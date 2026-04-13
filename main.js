@@ -5,7 +5,7 @@ const { setMainWindow, activeClaudeProcs } = require('./lib/state');
 const { makeRequest } = require('./lib/http');
 
 // Providers
-const { chatOpenClaw, streamOpenClaw, pingOpenClaw, chatOpenClawLocal, pingOpenClawLocal } = require('./providers/openclaw');
+const { chatOpenClaw, streamOpenClaw, pingOpenClaw, chatOpenClawLocal, pingOpenClawLocal } = require('./providers/openclaw-improved');
 const { chatHermes, pingHermes, chatHermesLocal, pingHermesLocal } = require('./providers/hermes');
 const { chatClaudeCode, streamClaudeCode, pingClaudeCode, chatClaudeCodeSSH, streamClaudeCodeSSH, pingClaudeCodeSSH, getClaudeSDK } = require('./providers/claude-code');
 const { chatCodexLocal, streamCodexLocal, pingCodexLocal, chatCodexSSH, streamCodexSSH, pingCodexSSH } = require('./providers/codex');
