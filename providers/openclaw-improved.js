@@ -9,20 +9,33 @@ const DEFAULT_GATEWAY_PORT = 18789;
 const CHAT_TIMEOUT = 300000;   // 5 min — agent turns can be slow
 const PING_TIMEOUT = 15000;    // 15s for health checks
 
-// Gateway noise lines that appear on stdout before the actual response.
-// These must be filtered so only the agent's reply reaches the UI.
-const NOISE_PATTERNS = [
-  /^gateway connect failed/i,
-  /^Gateway agent failed/i,
-  /^Gateway target:/i,
-  /^Source:/i,
-  /^Config:/i,
-  /^Bind:/i,
-];
+// Regex to detect tool start events from verbose output.
+// Example: [agent] embedded run tool start: runId=abc tool=web_search toolCallId=call_xyz
+const TOOL_START_RE = /^\[agent\].*\btool start:.*\btool=(\S+)\s+toolCallId=(\S+)/;
 
-function isNoiseLine(line) {
+/**
+ * Returns true if the line is NOT agent response content —
+ * i.e. it's gateway noise, diagnostic output, stack traces, etc.
+ * These lines are filtered from the stream so the UI only sees the reply.
+ */
+function isNonContentLine(line) {
   const t = line.trim();
-  return !t || NOISE_PATTERNS.some(p => p.test(t));
+  if (!t) return true;
+  // Gateway connection noise
+  if (/^gateway connect failed/i.test(t)) return true;
+  if (/^Gateway agent failed/i.test(t)) return true;
+  if (/^Gateway target:/i.test(t)) return true;
+  if (/^Source:/i.test(t)) return true;
+  if (/^Config:/i.test(t)) return true;
+  if (/^Bind:/i.test(t)) return true;
+  // Verbose diagnostic lines ([agent], [diagnostic], [plugins], [tools], etc.)
+  if (t.startsWith('[')) return true;
+  // Plugin registration
+  if (/^Registered plugin/i.test(t)) return true;
+  // Stack traces
+  if (/^\s+at\s/.test(line)) return true;
+  if (/^TypeError:/i.test(t)) return true;
+  return false;
 }
 
 // ── Shared Helpers ─────────────────────────────────────────────────────────
@@ -75,9 +88,10 @@ function getOrCreateSessionId(agent) {
  * Build CLI command for LOCAL execution (single shell layer).
  * Single-quote escaping works directly with bash -l -c.
  */
-function buildLocalCmd(agentId, message, { json = false, sessionId = null } = {}) {
+function buildLocalCmd(agentId, message, { json = false, sessionId = null, verbose = false } = {}) {
   let cmd = `openclaw agent --agent ${escapeForShell(agentId)} --message ${escapeForShell(message)}`;
   if (sessionId) cmd += ` --session-id ${escapeForShell(sessionId)}`;
+  if (verbose) cmd += ' --verbose on';
   if (json) cmd += ' --json';
   return cmd;
 }
@@ -88,10 +102,11 @@ function buildLocalCmd(agentId, message, { json = false, sessionId = null } = {}
  * Decoded on the remote side via $(printf %s <b64> | base64 -d) inside
  * double quotes — command substitution output is not re-interpreted.
  */
-function buildSSHCmd(agentId, message, { json = false, sessionId = null } = {}) {
+function buildSSHCmd(agentId, message, { json = false, sessionId = null, verbose = false } = {}) {
   const b64 = Buffer.from(message).toString('base64');
   let cmd = `openclaw agent --agent "${agentId}" --message "$(printf %s ${b64} | base64 -d)"`;
   if (sessionId) cmd += ` --session-id "${sessionId}"`;
+  if (verbose) cmd += ' --verbose on';
   if (json) cmd += ' --json';
   return cmd;
 }
@@ -158,7 +173,7 @@ function parsePlainOutput(raw) {
 
   for (const line of lines) {
     if (!pastNoise) {
-      if (isNoiseLine(line)) continue;
+      if (isNonContentLine(line)) continue;
       pastNoise = true;
     }
     content.push(line);
@@ -172,51 +187,68 @@ function parsePlainOutput(raw) {
 
 /**
  * Core streaming handler. Spawns a process running the openclaw CLI
- * (without --json) and streams filtered stdout to the UI in real-time.
+ * (with --verbose on, without --json) and streams filtered stdout to
+ * the UI in real-time.
  *
- * Gateway noise lines at the start of output are silently dropped.
+ * During the preamble (noise + diagnostics + tool events), output is
+ * processed line-by-line:
+ *   - Gateway noise and diagnostic lines are silently dropped.
+ *   - Tool start events are parsed and emitted as agent:stream-tool-use.
+ *
  * Once the first real content line appears, all subsequent output
- * streams through unmodified — exactly like watching it in a terminal.
+ * streams through raw — exactly like watching it in a terminal.
  */
 function streamFromProcess(proc, event, requestId, sessionId, timeout) {
   return new Promise((resolve) => {
     let settled = false;
     let sawContent = false;
-    let pastNoise = false;
+    let inContent = false;  // once true, all stdout is response text
     let lineBuffer = '';
     let stderrBuf = '';
-
-    function sendChunk(text) {
-      if (text) {
-        sawContent = true;
-        event.sender.send('agent:stream-chunk', requestId, text);
-      }
-    }
 
     proc.stdout.on('data', (chunk) => {
       const text = chunk.toString();
 
-      // Once we're past the noise section, stream everything through raw
-      if (pastNoise) {
-        sendChunk(text);
+      // Already in content phase — send raw chunks immediately
+      if (inContent) {
+        sawContent = true;
+        event.sender.send('agent:stream-chunk', requestId, text);
         return;
       }
 
-      // Still in potential noise section — filter line by line
+      // Preamble phase — process line by line to detect tools & filter noise
       lineBuffer += text;
       const lines = lineBuffer.split('\n');
       lineBuffer = lines.pop(); // keep incomplete last line in buffer
 
       for (let i = 0; i < lines.length; i++) {
-        if (isNoiseLine(lines[i])) continue;
+        const line = lines[i];
 
-        // First real content line — we're past the noise
-        pastNoise = true;
-        // Send this line and all remaining buffered lines
-        const remaining = lines.slice(i).join('\n');
-        sendChunk(lineBuffer ? remaining + '\n' + lineBuffer : remaining);
+        // Detect tool start events → emit as tool-use indicator
+        const toolMatch = line.match(TOOL_START_RE);
+        if (toolMatch) {
+          event.sender.send('agent:stream-tool-use', requestId, {
+            id: toolMatch[2],
+            tool: toolMatch[1],
+            input: {},
+          });
+          continue;
+        }
+
+        // Skip all non-content lines (noise, diagnostics, stack traces)
+        if (isNonContentLine(line)) continue;
+
+        // First real content line — switch to content mode
+        inContent = true;
+        sawContent = true;
+        // Send this line + all remaining lines + buffer as one chunk
+        const remaining = lines.slice(i);
+        const toSend = lineBuffer
+          ? remaining.join('\n') + '\n' + lineBuffer
+          : remaining.join('\n');
         lineBuffer = '';
-        return;
+        event.sender.send('agent:stream-chunk', requestId, toSend);
+        return; // future data events go through the inContent fast path
       }
     });
 
@@ -252,11 +284,10 @@ function streamFromProcess(proc, event, requestId, sessionId, timeout) {
       settled = true;
       clearTimeout(timer);
 
-      // Flush any remaining buffer (filter noise if we never got past it)
-      if (lineBuffer.trim()) {
-        if (pastNoise || !isNoiseLine(lineBuffer)) {
-          sendChunk(lineBuffer);
-        }
+      // Flush any remaining buffer
+      if (lineBuffer.trim() && !isNonContentLine(lineBuffer)) {
+        sawContent = true;
+        event.sender.send('agent:stream-chunk', requestId, lineBuffer);
       }
 
       if (code !== 0 && !sawContent) {
@@ -282,7 +313,7 @@ function streamFromProcess(proc, event, requestId, sessionId, timeout) {
 
 async function remoteStreamCli(event, requestId, agent, message, sessionId) {
   const agentId = agent.openclawAgent || 'main';
-  const cmd = buildSSHCmd(agentId, message, { sessionId });
+  const cmd = buildSSHCmd(agentId, message, { sessionId, verbose: true });
 
   const sshArgs = [...buildSSHArgs(agent), `bash -l -c ${JSON.stringify(cmd)}`];
   const proc = spawn('ssh', sshArgs);
@@ -334,7 +365,7 @@ function localHeaders(agent) {
 async function localStreamCli(event, requestId, agent, message, sessionId) {
   const agentId = agent.openclawAgent || 'main';
   const workDir = agent.workDir || process.env.HOME;
-  const cmd = buildLocalCmd(agentId, message, { sessionId });
+  const cmd = buildLocalCmd(agentId, message, { sessionId, verbose: true });
 
   const proc = spawn('bash', ['-l', '-c', cmd], { cwd: workDir });
 

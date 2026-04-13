@@ -6,7 +6,7 @@ const { makeRequest } = require('./lib/http');
 
 // Providers
 const { chatOpenClaw, streamOpenClaw, pingOpenClaw, chatOpenClawLocal, pingOpenClawLocal } = require('./providers/openclaw-improved');
-const { chatHermes, pingHermes, chatHermesLocal, pingHermesLocal } = require('./providers/hermes');
+const { chatHermes, streamHermes, pingHermes, chatHermesLocal, streamHermesLocal, pingHermesLocal } = require('./providers/hermes');
 const { chatClaudeCode, streamClaudeCode, pingClaudeCode, chatClaudeCodeSSH, streamClaudeCodeSSH, pingClaudeCodeSSH } = require('./providers/claude-code');
 const { chatCodexLocal, streamCodexLocal, pingCodexLocal, chatCodexSSH, streamCodexSSH, pingCodexSSH } = require('./providers/codex');
 const { chatOpenAI, streamOpenAI } = require('./providers/openai-compat');
@@ -97,17 +97,8 @@ ipcMain.on('agent:chat-stream', async (event, requestId, agent, messages) => {
     else if (agent.provider === 'codex-ssh') await streamCodexSSH(event, requestId, agent, messages);
     else if (agent.provider === 'openclaw') await streamOpenClaw(event, requestId, agent, messages);
     else if (agent.provider === 'openclaw-local') await streamOpenClaw(event, requestId, agent, messages);
-    else if (agent.provider === 'hermes' || agent.provider === 'hermes-local') {
-      const chatFn = agent.provider === 'hermes' ? chatHermes : chatHermesLocal;
-      const res = await chatFn(agent, messages);
-      if (res.error) {
-        event.sender.send('agent:stream-error', requestId, res.error);
-      } else {
-        if (res.thinking) event.sender.send('agent:stream-thinking', requestId, res.thinking);
-        if (res.content) event.sender.send('agent:stream-chunk', requestId, res.content);
-        event.sender.send('agent:stream-done', requestId, { sessionId: res.sessionId || null });
-      }
-    }
+    else if (agent.provider === 'hermes') await streamHermes(event, requestId, agent, messages);
+    else if (agent.provider === 'hermes-local') await streamHermesLocal(event, requestId, agent, messages);
     else await streamOpenAI(event, requestId, agent, messages);
   } catch (err) {
     event.sender.send('agent:stream-error', requestId, err.message);

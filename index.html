@@ -1858,6 +1858,12 @@
         display = `Grep: ${input.pattern}`;
       } else if (tool === 'Glob' && input?.pattern) {
         display = `Glob: ${input.pattern}`;
+      } else if (tool === 'exec' && input?.command) {
+        display = `$ ${input.command.length > 100 ? input.command.slice(0, 100) + '...' : input.command}`;
+      } else if (['read', 'write', 'edit', 'apply_patch'].includes(tool) && input?.path) {
+        display = `${tool}: ${input.path}`;
+      } else if (['web_search', 'web_fetch', 'memory_search', 'memory_get', 'image'].includes(tool)) {
+        display = tool.replace(/_/g, ' ');
       }
       return (
         <div className={`tool-use-indicator${denied ? ' denied' : ''}`}>
