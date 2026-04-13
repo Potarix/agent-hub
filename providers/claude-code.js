@@ -101,12 +101,8 @@ function buildClaudeSDKOptions(agent, extraOpts = {}) {
     ...extraOpts,
   };
   if (agent.model) options.model = agent.model;
-  const permMode = agent.permissionMode || 'acceptEdits';
-  if (permMode === 'bypassPermissions') {
-    options.dangerouslySkipPermissions = true;
-  } else {
-    options.permissionMode = permMode;
-  }
+  const permMode = agent.permissionMode || 'default';
+  options.permissionMode = permMode;
   if (agent.allowedTools) {
     options.allowedTools = agent.allowedTools.split(/[,\s]+/).filter(Boolean);
   }
@@ -176,8 +172,9 @@ async function chatClaudeCode(agent, messages) {
     // For non-streaming mode, we'll auto-approve to maintain backward compatibility
     // Users who need approval should use streaming mode
     const options = buildClaudeSDKOptions(agent, {
-      permissionHandler: async () => ({
-        behavior: 'allow'
+      canUseTool: async (_toolName, input) => ({
+        behavior: 'allow',
+        updatedInput: input,
       })
     });
 
@@ -263,9 +260,15 @@ async function streamClaudeCode(event, requestId, agent, messages) {
     activeClaudeProcs.set(requestId, {
       abort: () => abortController.abort(),
       resolvePermission: (toolUseId, decision) => {
-        const resolver = pendingPermissions.get(toolUseId);
-        if (resolver) {
-          resolver(decision);
+        const entry = pendingPermissions.get(toolUseId);
+        if (entry) {
+          const { resolve, suggestions } = entry;
+          // Attach SDK suggestions for "always allow" flows
+          if (decision.behavior === 'allow' && decision.alwaysAllow && suggestions) {
+            decision.updatedPermissions = suggestions;
+          }
+          delete decision.alwaysAllow;
+          resolve(decision);
           pendingPermissions.delete(toolUseId);
         }
       },
@@ -275,19 +278,26 @@ async function streamClaudeCode(event, requestId, agent, messages) {
       signal: abortController.signal,
       // Enable partial messages so we get real-time text deltas
       includePartialMessages: true,
-      // Add permission handler to forward requests to frontend
-      permissionHandler: async (request) => {
+      // canUseTool handler to forward permission requests to frontend
+      canUseTool: async (toolName, input, { signal, suggestions }) => {
         return new Promise((resolve) => {
-          const toolUseId = request.tool_use_id || request.id || Math.random().toString(36);
-          pendingPermissions.set(toolUseId, resolve);
+          const toolUseId = Math.random().toString(36).slice(2);
+          pendingPermissions.set(toolUseId, { resolve, suggestions });
 
           // Send permission request to frontend
           event.sender.send('agent:permission-request', requestId, {
             toolUseId,
-            tool: request.tool_name || request.tool,
-            input: request.input,
-            description: request.description,
+            tool: toolName,
+            input,
             timestamp: Date.now()
+          });
+
+          // If the query is aborted, auto-deny pending permissions
+          signal?.addEventListener('abort', () => {
+            if (pendingPermissions.has(toolUseId)) {
+              pendingPermissions.delete(toolUseId);
+              resolve({ behavior: 'deny', message: 'Aborted' });
+            }
           });
         });
       }
