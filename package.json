@@ -17,5 +17,23 @@
     "openai": "^6.34.0"
   },
   "author": "Omar Dadabhoy",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OmarDadabhoy/agenthub.git"
+  },
+  "bugs": {
+    "url": "https://github.com/OmarDadabhoy/agenthub/issues"
+  },
+  "homepage": "https://github.com/OmarDadabhoy/agenthub#readme",
+  "keywords": [
+    "ai",
+    "agents",
+    "electron",
+    "claude",
+    "openai",
+    "codex",
+    "desktop",
+    "dashboard"
+  ]
 }

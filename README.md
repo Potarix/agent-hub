@@ -37,7 +37,7 @@ Before running Agent Hub, ensure you have the following installed:
 
 1. **Clone the repository**
 ```bash
-git clone https://github.com/yourusername/agent-hub.git
+git clone https://github.com/OmarDadabhoy/agenthub.git
 cd agent-hub
 ```
 
@@ -306,8 +306,8 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 🔗 Links
 
-- [Issue Tracker](https://github.com/yourusername/agent-hub/issues)
-- [Documentation](https://github.com/yourusername/agent-hub/wiki)
+- [Issue Tracker](https://github.com/OmarDadabhoy/agenthub/issues)
+- [Documentation](https://github.com/OmarDadabhoy/agenthub/wiki)
 
 ## 👥 Author
 
