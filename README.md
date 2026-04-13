@@ -249,31 +249,24 @@ This enables developer tools and hot reload.
 
 ### Provider Not Working
 
-**Claude Code Issues:**
+Agent Hub does not install or manage AI agents for you — each provider must already be installed and running on your system before you can use it in Agent Hub.
+
+**Claude Code**: Requires the `claude` CLI to be installed and authenticated.
 ```bash
-# Check CLI installation
+# Verify it's available
 which claude
-
-# Install if missing
-npm install -g @anthropic-ai/claude-code
 ```
 
-**OpenClaw Issues:**
+**OpenClaw**: Requires the `openclaw` CLI to be installed and available in your PATH.
 ```bash
-# Check CLI installation
+# Verify it's available
 which openclaw
-
-# Install if missing
-npm install -g openclaw
 ```
 
-**Hermes Issues:**
+**Hermes**: Requires a running Hermes service.
 ```bash
-# Check if Hermes service is running
+# Verify the service is running
 hermes --version
-
-# Start Hermes service
-hermes serve
 ```
 
 ### Permission Requests Not Appearing
