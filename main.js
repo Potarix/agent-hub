@@ -7,9 +7,36 @@ const { makeRequest } = require('./lib/http');
 // Providers
 const { chatOpenClaw, streamOpenClaw, pingOpenClaw, chatOpenClawLocal, pingOpenClawLocal } = require('./providers/openclaw');
 const { chatHermes, pingHermes, chatHermesLocal, pingHermesLocal } = require('./providers/hermes');
-const { chatClaudeCode, streamClaudeCode, pingClaudeCode, chatClaudeCodeSSH, streamClaudeCodeSSH, pingClaudeCodeSSH } = require('./providers/claude-code');
+const { chatClaudeCode, streamClaudeCode, pingClaudeCode, chatClaudeCodeSSH, streamClaudeCodeSSH, pingClaudeCodeSSH, getClaudeSDK } = require('./providers/claude-code');
 const { chatCodexLocal, streamCodexLocal, pingCodexLocal, chatCodexSSH, streamCodexSSH, pingCodexSSH } = require('./providers/codex');
 const { chatOpenAI, streamOpenAI } = require('./providers/openai-compat');
+
+// Pre-initialize Claude Code SDK on app startup with retries
+// This runs asynchronously and doesn't block the app startup
+async function ensureClaudeSDKReady() {
+  const maxRetries = 5;
+  let retryDelay = 1000;
+
+  for (let i = 1; i <= maxRetries; i++) {
+    try {
+      await getClaudeSDK();
+      console.log(`[Main] Claude Code SDK pre-warmed successfully (attempt ${i})`);
+      return true;
+    } catch (err) {
+      console.warn(`[Main] Claude Code SDK pre-warm attempt ${i}/${maxRetries} failed:`, err.message);
+      if (i < maxRetries) {
+        console.log(`[Main] Retrying in ${retryDelay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+        retryDelay = Math.min(retryDelay * 1.5, 5000); // Exponential backoff up to 5 seconds
+      }
+    }
+  }
+  console.error('[Main] Claude Code SDK failed to initialize after all attempts');
+  return false;
+}
+
+// Start SDK initialization immediately and keep retrying
+ensureClaudeSDKReady();
 
 // Feature modules
 const { registerAuthHandlers } = require('./auth');
