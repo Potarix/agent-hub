@@ -6,16 +6,92 @@ const { activeClaudeProcs } = require('../lib/state');
 // ── Lazy-load Claude Code SDK ──────────────────────────────────────────────
 
 let _claudeSDK = null;
-async function getClaudeSDK() {
-  if (!_claudeSDK) {
+let _sdkInitPromise = null;
+let _initAttempts = 0;
+const MAX_INIT_ATTEMPTS = 5;
+
+async function initializeClaudeSDK(forceRetry = false) {
+  // If already initialized and not forcing retry, return it
+  if (_claudeSDK && !forceRetry) return _claudeSDK;
+
+  // If currently initializing and not forcing retry, wait for it
+  if (_sdkInitPromise && !forceRetry) {
     try {
-      _claudeSDK = await import('@anthropic-ai/claude-code');
-    } catch {
-      throw new Error('Claude Code SDK not installed. Run: npm install @anthropic-ai/claude-code');
+      return await _sdkInitPromise;
+    } catch (error) {
+      // If the existing promise failed, try again
+      return initializeClaudeSDK(true);
     }
   }
-  return _claudeSDK;
+
+  // Check if we've exceeded max attempts
+  if (_initAttempts >= MAX_INIT_ATTEMPTS && !forceRetry) {
+    throw new Error(`Claude Code SDK initialization failed after ${MAX_INIT_ATTEMPTS} attempts`);
+  }
+
+  // Start initialization
+  _initAttempts++;
+  _sdkInitPromise = (async () => {
+    try {
+      console.log(`[Claude Code] Initializing SDK... (attempt ${_initAttempts}/${MAX_INIT_ATTEMPTS})`);
+
+      // Add a small delay if this is a retry to avoid rapid retries
+      if (_initAttempts > 1) {
+        await new Promise(resolve => setTimeout(resolve, 500 * _initAttempts));
+      }
+
+      _claudeSDK = await import('@anthropic-ai/claude-code');
+      console.log('[Claude Code] SDK initialized successfully');
+      _initAttempts = 0; // Reset counter on success
+      return _claudeSDK;
+    } catch (error) {
+      console.error(`[Claude Code] Failed to initialize SDK (attempt ${_initAttempts}):`, error.message);
+      _claudeSDK = null;
+      _sdkInitPromise = null; // Reset so we can retry
+
+      if (_initAttempts >= MAX_INIT_ATTEMPTS) {
+        throw new Error('Claude Code SDK not installed or failed to load. Run: npm install @anthropic-ai/claude-code');
+      }
+      throw error;
+    }
+  })();
+
+  return await _sdkInitPromise;
 }
+
+async function getClaudeSDK() {
+  // Always ensure SDK is initialized with automatic retry
+  for (let i = 0; i < 3; i++) {
+    try {
+      return await initializeClaudeSDK();
+    } catch (error) {
+      if (i === 2) throw error;
+      console.log(`[Claude Code] Retrying SDK initialization (${i + 1}/3)...`);
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+}
+
+// Pre-initialize SDK on module load with better error handling
+// This runs in the background without blocking
+async function preWarmSDK() {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await initializeClaudeSDK();
+      console.log('[Claude Code] SDK pre-warmed successfully');
+      return;
+    } catch (err) {
+      console.warn(`[Claude Code] SDK pre-warm attempt ${attempt} failed:`, err.message);
+      if (attempt < 3) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+  }
+  console.warn('[Claude Code] SDK pre-warm failed after all attempts (will retry on first use)');
+}
+
+// Start pre-warming immediately
+preWarmSDK();
 
 // ── Build options for SDK query ────────────────────────────────────────────
 
@@ -77,7 +153,25 @@ async function chatClaudeCode(agent, messages) {
   if (!lastUserMsg) return { error: 'No user message found' };
 
   try {
-    const { query } = await getClaudeSDK();
+    // Ensure SDK is initialized with robust retry mechanism
+    let sdk;
+    try {
+      sdk = await getClaudeSDK();
+    } catch (error) {
+      console.error('[Claude Code] Failed to initialize SDK for chat:', error);
+      // Return a user-friendly error message
+      return {
+        error: 'Claude Code is still initializing. Please wait a moment and try again, or use /clear command first if the issue persists.'
+      };
+    }
+
+    if (!sdk) {
+      return {
+        error: 'Claude Code SDK is not available. Please restart the application or check your installation.'
+      };
+    }
+
+    const { query } = sdk;
 
     // For non-streaming mode, we'll auto-approve to maintain backward compatibility
     // Users who need approval should use streaming mode
@@ -141,7 +235,26 @@ async function streamClaudeCode(event, requestId, agent, messages) {
   }
 
   try {
-    const { query } = await getClaudeSDK();
+    // Ensure SDK is initialized with robust retry mechanism
+    let sdk;
+    try {
+      sdk = await getClaudeSDK();
+    } catch (error) {
+      console.error('[Claude Code] Failed to initialize SDK for streaming:', error);
+      event.sender.send('agent:stream-error', requestId,
+        'Claude Code is still initializing. Please wait a moment and try again, or use /clear command first if the issue persists.'
+      );
+      return;
+    }
+
+    if (!sdk) {
+      event.sender.send('agent:stream-error', requestId,
+        'Claude Code SDK is not available. Please restart the application or check your installation.'
+      );
+      return;
+    }
+
+    const { query } = sdk;
 
     const abortController = new AbortController();
     const pendingPermissions = new Map(); // toolUseId -> resolve callback
@@ -268,10 +381,33 @@ async function streamClaudeCode(event, requestId, agent, messages) {
   }
 }
 
+// ── SDK Ready Check ────────────────────────────────────────────────────────
+
+async function isSDKReady() {
+  try {
+    const sdk = await getClaudeSDK();
+    return sdk !== null && sdk !== undefined;
+  } catch {
+    return false;
+  }
+}
+
 // ── Local ping (version check) ────────────────────────────────────────────
 
 async function pingClaudeCode(agent) {
   try {
+    // First check if SDK is ready
+    const sdkReady = await isSDKReady();
+    if (!sdkReady) {
+      // Try to initialize SDK if not ready
+      console.log('[Claude Code] SDK not ready during ping, attempting initialization...');
+      try {
+        await getClaudeSDK();
+      } catch (error) {
+        console.warn('[Claude Code] SDK initialization during ping failed:', error.message);
+      }
+    }
+
     const claudePath = agent.claudePath || 'claude';
     const output = await runLocalCommand(claudePath, ['--version'], { timeout: 10000 });
     return { online: true, info: output.trim() };
@@ -573,6 +709,7 @@ async function pingClaudeCodeSSH(agent) {
 
 module.exports = {
   getClaudeSDK,
+  isSDKReady,
   buildClaudeSDKOptions,
   extractClaudeCodeResponse,
   chatClaudeCode,

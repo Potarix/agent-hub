@@ -1357,7 +1357,10 @@
     function loadAgents() {
       try {
         const saved = localStorage.getItem('agent-hub-agents');
-        return saved ? JSON.parse(saved) : DEFAULT_AGENTS;
+        if (!saved) return DEFAULT_AGENTS;
+        const agents = JSON.parse(saved);
+        // Clear stale sessionIds — they won't survive an app restart
+        return agents.map(a => ({ ...a, sessionId: null }));
       } catch { return DEFAULT_AGENTS; }
     }
 
