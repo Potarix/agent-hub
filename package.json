@@ -9,7 +9,6 @@
     "dev": "electron . --dev"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "^1.0.128",
     "@openai/agents": "^0.8.3",
     "@openai/agents-extensions": "^0.8.3",
     "@openai/codex-sdk": "^0.120.0",
