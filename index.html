@@ -1499,7 +1499,11 @@
               statuses={statuses}
               loadingAgents={loadingAgents}
               completionStatus={completionStatus}
-              onSelect={setActiveId}
+              onSelect={(agentId) => {
+                setActiveId(agentId);
+                // Clear completion status when clicking into the agent's thread
+                setCompletionStatus(prev => ({ ...prev, [agentId]: null }));
+              }}
               onAdd={addAgent}
               onOpenSettings={() => setShowSettings(true)}
               lastActivityTime={lastActivityTime}
@@ -1813,10 +1817,7 @@
           if (setLastActivityTime) {
             setLastActivityTime(prev => ({ ...prev, [agentRef.current.id]: Date.now() }));
           }
-          // Clear completion status after 30 seconds (like iMessage)
-          setTimeout(() => {
-            setCompletionStatus(null);
-          }, 30000);
+          // Completion status will be cleared when user clicks the message area
           // Persist Claude Code session ID — use ref for latest agent
           const currentAgent = agentRef.current;
           if (meta?.sessionId && !currentAgent.sessionId && onUpdateAgent) {
