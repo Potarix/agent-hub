@@ -127,14 +127,22 @@ async function streamClaudeCode(event, requestId, agent, messages) {
 
   const prompt = lastUserMsg.content || '';
   const args = buildCLIArgs(agent, [
+    '--input-format', 'stream-json',
     '--output-format', 'stream-json',
     '--verbose',
     '--include-partial-messages',
   ]);
 
   const proc = spawnClaude(agent, args);
-  proc.stdin.write(prompt);
-  proc.stdin.end();
+
+  // Send prompt using stream-json protocol (keeps stdin open for permissions)
+  const userMsg = JSON.stringify({
+    type: 'user',
+    message: { role: 'user', content: prompt },
+    parent_tool_use_id: null,
+    session_id: null,
+  });
+  proc.stdin.write(userMsg + '\n');
 
   let buffer = '';
   let stderrOutput = '';
@@ -144,6 +152,7 @@ async function streamClaudeCode(event, requestId, agent, messages) {
 
   activeClaudeProcs.set(requestId, {
     abort: () => proc.kill(),
+    stdin: proc.stdin,
   });
 
   proc.stdout.on('data', (chunk) => {
@@ -162,20 +171,20 @@ async function streamClaudeCode(event, requestId, agent, messages) {
           continue;
         }
 
-        // Content block deltas — token-by-token streaming
-        if (msg.type === 'content_block_delta') {
-          if (msg.delta?.type === 'text_delta' && msg.delta.text) {
-            event.sender.send('agent:stream-chunk', requestId, msg.delta.text);
+        // Stream events — token-by-token deltas wrapped in stream_event
+        if (msg.type === 'stream_event' && msg.event) {
+          const evt = msg.event;
+          if (evt.type === 'content_block_delta') {
+            if (evt.delta?.type === 'text_delta' && evt.delta.text) {
+              event.sender.send('agent:stream-chunk', requestId, evt.delta.text);
+            }
+            if (evt.delta?.type === 'thinking_delta' && evt.delta.thinking) {
+              event.sender.send('agent:stream-thinking', requestId, evt.delta.thinking);
+            }
           }
-          if (msg.delta?.type === 'thinking_delta' && msg.delta.thinking) {
-            event.sender.send('agent:stream-thinking', requestId, msg.delta.thinking);
+          if (evt.type === 'content_block_start' && evt.index != null) {
+            seenBlocks.add(evt.index);
           }
-          continue;
-        }
-
-        // Track blocks streamed via deltas for dedup
-        if (msg.type === 'content_block_start' && msg.index != null) {
-          seenBlocks.add(msg.index);
           continue;
         }
 
@@ -203,9 +212,21 @@ async function streamClaudeCode(event, requestId, agent, messages) {
           continue;
         }
 
-        // Result — final session ID
+        // Permission request — forward to frontend for approval
+        if (msg.type === 'control_request' && msg.subtype === 'can_use_tool') {
+          event.sender.send('agent:permission-request', requestId, {
+            toolUseId: msg.request_id,
+            tool: msg.tool_name,
+            input: msg.input,
+            timestamp: Date.now(),
+          });
+          continue;
+        }
+
+        // Result — final session ID, close stdin
         if (msg.type === 'result') {
           sessionId = msg.session_id || sessionId;
+          try { proc.stdin.end(); } catch { /* already closed */ }
           continue;
         }
       } catch {

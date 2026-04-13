@@ -118,23 +118,18 @@ ipcMain.on('agent:chat-stream', async (event, requestId, agent, messages) => {
 
 ipcMain.on('agent:permission-response', (_event, requestId, toolUseId, decision) => {
   const handle = activeClaudeProcs.get(requestId);
-  if (!handle) return;
+  if (!handle || !handle.stdin) return;
 
-  if (handle.resolvePermission) {
-    handle.resolvePermission(toolUseId, decision);
-    return;
-  }
-
-  if (handle.stdin && !handle.killed) {
-    try {
-      const response = JSON.stringify({
-        type: 'tool_permission_response',
-        tool_use_id: toolUseId,
-        decision,
-      });
-      handle.stdin.write(response + '\n');
-    } catch { /* process may have exited */ }
-  }
+  try {
+    const allow = decision.behavior === 'allow';
+    const response = JSON.stringify({
+      type: 'control_response',
+      request_id: toolUseId,
+      allow,
+      ...(!allow && decision.message ? { reason: decision.message } : {}),
+    });
+    handle.stdin.write(response + '\n');
+  } catch { /* process may have exited */ }
 });
 
 // ── Agent Ping IPC ──
