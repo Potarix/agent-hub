@@ -2104,7 +2104,8 @@
           } else if (res.error) {
             setMessages(prev => [...prev, { role: 'error', content: res.error }]);
           } else if (res.content) {
-            setMessages(prev => [...prev, { role: 'system', content: res.content }]);
+            // Use 'assistant' role for actual agent responses from slash commands
+            setMessages(prev => [...prev, { role: 'assistant', content: res.content }]);
           }
         } catch (err) {
           setMessages(prev => [...prev, { role: 'error', content: err.message || 'Command failed' }]);
@@ -2460,7 +2461,7 @@
                 )}
                 {msg.role === 'error' && (msg.content.includes('not authenticated') || msg.content.includes('OAuth') || msg.content.includes('auth') || msg.content.includes('setup')) && (
                   <AuthLoginButton agent={agent} onSuccess={() => {
-                    setMessages(prev => [...prev, { role: 'system', content: 'Authenticated! You can now send messages.' }]);
+                    setMessages(prev => [...prev, { role: 'assistant', content: 'Authenticated! You can now send messages.' }]);
                   }} />
                 )}
               </div>
