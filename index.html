@@ -1335,6 +1335,11 @@
 </head>
 <body>
   <div id="root"></div>
+  <!-- Audio element for notification sound - using MP3 for better compatibility -->
+  <audio id="notificationSound" preload="auto">
+    <source src="assets/notification.mp3" type="audio/mpeg">
+    <source src="assets/imessage-sound.aiff" type="audio/aiff">
+  </audio>
   <script type="text/babel">
     const { useState, useEffect, useRef, useCallback } = React;
 
@@ -2003,6 +2008,30 @@
             });
           }
 
+          // Always play notification sound when agent responds
+          const audio = document.getElementById('notificationSound');
+          if (audio) {
+            audio.volume = 1.0; // Ensure volume is at max
+            audio.currentTime = 0; // Reset to beginning
+            const playPromise = audio.play();
+            if (playPromise !== undefined) {
+              playPromise.then(() => {
+                console.log('Notification sound played successfully for completion');
+              }).catch(err => {
+                console.error('Notification sound play failed:', err);
+                // Try alternative approach for Electron
+                try {
+                  audio.load();
+                  audio.play();
+                } catch(e) {
+                  console.error('Alternative play method also failed:', e);
+                }
+              });
+            }
+          } else {
+            console.error('Notification audio element not found');
+          }
+
           // Update last activity time for this agent
           if (setLastActivityTime) {
             setLastActivityTime(prev => ({ ...prev, [agentRef.current.id]: Date.now() }));
@@ -2062,6 +2091,30 @@
               const current = typeof prev === 'number' ? prev : 0;
               return current + 1;
             });
+          }
+
+          // Always play notification sound for permission requests
+          const audio = document.getElementById('notificationSound');
+          if (audio) {
+            audio.volume = 1.0; // Ensure volume is at max
+            audio.currentTime = 0; // Reset to beginning
+            const playPromise = audio.play();
+            if (playPromise !== undefined) {
+              playPromise.then(() => {
+                console.log('Notification sound played successfully for completion');
+              }).catch(err => {
+                console.error('Notification sound play failed:', err);
+                // Try alternative approach for Electron
+                try {
+                  audio.load();
+                  audio.play();
+                } catch(e) {
+                  console.error('Alternative play method also failed:', e);
+                }
+              });
+            }
+          } else {
+            console.error('Notification audio element not found');
           }
         });
 
