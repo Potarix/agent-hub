@@ -228,11 +228,18 @@
     .agent-name {
       font-size: 14px;
       font-weight: 600;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      display: flex;
+      align-items: center;
+      gap: 4px;
       letter-spacing: -0.1px;
       line-height: 1.3;
+      min-width: 0;
+    }
+    .agent-name-text {
+      white-space: nowrap;
+      overflow: hidden;
+      flex-shrink: 1;
+      min-width: 0;
     }
     .agent-provider {
       font-size: 12px;
@@ -1305,6 +1312,17 @@
       localStorage.setItem('agent-hub-chats', JSON.stringify(chats));
     }
 
+    function loadLastActivityTime() {
+      try {
+        const saved = localStorage.getItem('agent-hub-activity-times');
+        return saved ? JSON.parse(saved) : {};
+      } catch { return {}; }
+    }
+
+    function saveLastActivityTime(times) {
+      localStorage.setItem('agent-hub-activity-times', JSON.stringify(times));
+    }
+
     // ── Auth Login Button (in-app, no terminal) ──
     function AuthLoginButton({ agent, onSuccess }) {
       const [authState, setAuthState] = useState('idle'); // idle | logging-in | waiting-for-code | success | error
@@ -1448,12 +1466,13 @@
       const [editAgent, setEditAgent] = useState(null);
       const [theme, setTheme] = useState('dark');
       const [loadingAgents, setLoadingAgents] = useState(new Set());
-      const [lastActivityTime, setLastActivityTime] = useState({});
+      const [lastActivityTime, setLastActivityTime] = useState(loadLastActivityTime);
 
       const activeAgent = agents.find(a => a.id === activeId);
 
       useEffect(() => { saveAgents(agents); }, [agents]);
       useEffect(() => { saveChats(chats); }, [chats]);
+      useEffect(() => { saveLastActivityTime(lastActivityTime); }, [lastActivityTime]);
 
       // Sync theme with macOS system appearance
       useEffect(() => {
@@ -1605,7 +1624,7 @@
                   </div>
                   <div className="agent-info">
                     <div className="agent-name">
-                      {agent.name}
+                      <span className="agent-name-text">{agent.name}</span>
                       {loadingAgents.has(agent.id) && (
                         <span className="agent-thinking-indicator" title="Typing">
                           <span /><span /><span />
@@ -1793,13 +1812,15 @@
       const dragCounter = useRef(0);
       const toolUsesRef = useRef([]);
       const activeRequestIdRef = useRef(null);
-      // Keep a ref to the latest agent so stream callbacks never use a stale closure
+      // Keep refs to the latest agent/isActive so stream callbacks never use a stale closure
       const agentRef = useRef(agent);
       agentRef.current = agent;
+      const isActiveRef = useRef(isActive);
+      isActiveRef.current = isActive;
 
       useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-      }, [messages, streamText, streamThinking, permRequests]);
+      }, [messages, streamText, streamThinking, permRequests, agent.id]);
 
       useEffect(() => {
         inputRef.current?.focus();
@@ -1824,6 +1845,7 @@
 
         const offDone = window.agentHub.onStreamDone((id, meta) => {
           if (cancelled || id !== activeRequestIdRef.current) return;
+
           const content = streamTextRef.current;
           const thinking = streamThinkingRef.current || null;
           if (content) {
@@ -1831,21 +1853,26 @@
             if (thinking) msg.thinking = thinking;
             setMessages(prev => [...prev, msg]);
           }
-          // Mark agent as completed by incrementing unread count
-          setCompletionStatus(prev => {
-            const current = typeof prev === 'number' ? prev : 0;
-            return current + 1;
-          });
+
+          // Only increment completion status if user is NOT viewing this agent
+          // If they're already viewing it, they can see the messages in real-time
+          if (!isActiveRef.current) {
+            setCompletionStatus(prev => {
+              const current = typeof prev === 'number' ? prev : 0;
+              return current + 1;
+            });
+          }
+
           // Update last activity time for this agent
           if (setLastActivityTime) {
             setLastActivityTime(prev => ({ ...prev, [agentRef.current.id]: Date.now() }));
           }
-          // Completion status will be cleared when user clicks the message area
           // Persist Claude Code session ID — use ref for latest agent
           const currentAgent = agentRef.current;
           if (meta?.sessionId && !currentAgent.sessionId && onUpdateAgent) {
             onUpdateAgent({ ...currentAgent, sessionId: meta.sessionId });
           }
+
           streamTextRef.current = '';
           streamThinkingRef.current = '';
           toolUsesRef.current = [];
