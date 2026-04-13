@@ -57,4 +57,7 @@ contextBridge.exposeInMainWorld('agentHub', {
   // Theme
   getSystemTheme: () => ipcRenderer.invoke('theme:get'),
   onThemeChange: (cb) => ipcRenderer.on('theme:changed', (_e, isDark) => cb(isDark)),
+
+  // External links
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
 });
