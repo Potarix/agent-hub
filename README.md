@@ -6,16 +6,6 @@ Imessage for your AI Agents. Chat with your hermes, Openclaw, Codex, and claude 
 ![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-## 🎯 Features
-
-- **Multi-Provider Support**: Connect to AI providers including Claude Code, OpenAI, Codex, Hermes, and OpenClaw
-- **Unified Interface**: Single dashboard to manage all your AI conversations
-- **Streaming Responses**: Real-time streaming for supported providers
-- **Permission Management**: Advanced permission approval system for Claude Code operations
-- **SSH Remote Support**: Connect to remote AI agents via SSH
-- **Slash Commands**: Built-in commands for common operations
-- **Session Management**: Maintain conversation context across sessions
-
 ## 📋 Prerequisites
 
 Before running Agent Hub, ensure you have the following installed:
@@ -91,27 +81,6 @@ When you launch Agent Hub, you can add agents by clicking the "+" button and con
 
 #### OpenClaw
 - Requires OpenClaw CLI (`openclaw`)
-
-## 🎮 Usage
-
-### Basic Chat
-1. Select an agent from the sidebar
-2. Type your message in the input field
-3. Press Enter or click Send
-
-### Slash Commands
-Type `/` in the message input to see available commands:
-- `/clear` - Clear conversation history
-- `/reset` - Reset agent session
-- `/export` - Export conversation
-- `/settings` - Open agent settings
-
-### Keyboard Shortcuts
-- `Cmd+N` - New conversation
-- `Cmd+,` - Open settings
-- `Cmd+K` - Quick agent switcher
-- `Cmd+/` - Toggle sidebar
-- `Cmd+Shift+D` - Toggle dark mode
 
 ## 🏗️ Architecture
 
