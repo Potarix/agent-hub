@@ -483,33 +483,11 @@ async function streamCodexLocal(event, requestId, agent, messages) {
         stderrBuf += data.toString();
       });
 
-      // Activity-based timeout — resets on any stdout/stderr data
-      const timeout = agent.timeout || 300000;
-      let timer = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        proc.kill();
-        event.sender.send('agent:stream-error', requestId, 'Codex command timeout');
-        resolve();
-      }, timeout);
-
-      const resetTimer = () => {
-        clearTimeout(timer);
-        timer = setTimeout(() => {
-          if (settled) return;
-          settled = true;
-          proc.kill();
-          event.sender.send('agent:stream-error', requestId, 'Codex command timeout');
-          resolve();
-        }, timeout);
-      };
-      proc.stdout.on('data', resetTimer);
-      proc.stderr.on('data', resetTimer);
+      // No timeout — wait for agent to finish
 
       proc.on('close', (code) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
         activeClaudeProcs.delete(requestId);
 
         if (!forwarder.sentAnyContent && code !== 0 && stderrBuf.trim()) {
@@ -526,7 +504,6 @@ async function streamCodexLocal(event, requestId, agent, messages) {
       proc.on('error', (err) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
         activeClaudeProcs.delete(requestId);
         event.sender.send('agent:stream-error', requestId, err.message);
         resolve();
@@ -664,14 +641,9 @@ async function chatCodexLocal(agent, messages) {
         proc.stdout.on('data', (d) => { stdout += d.toString(); });
         proc.stderr.on('data', (d) => { stderr += d.toString(); });
 
-        const timeout = agent.timeout || 300000;
-        let timer = setTimeout(() => {
-          proc.kill();
-          reject(new Error('Command timeout'));
-        }, timeout);
+        // No timeout — wait for agent to finish
 
         proc.on('close', (code) => {
-          clearTimeout(timer);
           if (stdout.trim()) {
             const content = extractCodexResponse(stdout);
             resolve({ content });
@@ -683,7 +655,6 @@ async function chatCodexLocal(agent, messages) {
         });
 
         proc.on('error', (err) => {
-          clearTimeout(timer);
           reject(err);
         });
       });
@@ -927,31 +898,12 @@ async function streamCodexSSH(event, requestId, agent, messages) {
     }
   });
 
-  // Activity-based timeout — resets on any output
-  let timer = setTimeout(() => {
-    if (settled) return;
-    settled = true;
-    proc.kill();
-    event.sender.send('agent:stream-error', requestId, 'SSH command timeout');
-  }, 600000);
-
-  const resetTimer = () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      proc.kill();
-      event.sender.send('agent:stream-error', requestId, 'SSH command timeout');
-    }, 600000);
-  };
-  proc.stdout.on('data', resetTimer);
-  proc.stderr.on('data', resetTimer);
+  // No timeout — wait for agent to finish
 
   return new Promise((resolve) => {
     proc.on('close', (code) => {
       if (settled) return resolve();
       settled = true;
-      clearTimeout(timer);
       activeClaudeProcs.delete(requestId);
 
       if (code !== 0 && !forwarder.sentAnyContent && stderrOutput.trim()) {
@@ -974,7 +926,6 @@ async function streamCodexSSH(event, requestId, agent, messages) {
     proc.on('error', (err) => {
       if (settled) return resolve();
       settled = true;
-      clearTimeout(timer);
       activeClaudeProcs.delete(requestId);
       event.sender.send('agent:stream-error', requestId, err.message);
       resolve();
