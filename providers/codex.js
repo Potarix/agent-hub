@@ -2,7 +2,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { runSSHCommand, streamSSHCommand } = require('../lib/ssh');
+const { runSSHCommand } = require('../lib/ssh');
 const { getLoginEnv, runLocalCommand } = require('../lib/local');
 const { shellQuote, buildRemoteCdCommand, expandHomeDir } = require('../lib/shell');
 const { activeClaudeProcs } = require('../lib/state');
@@ -62,6 +62,19 @@ async function getCodexSDK() {
   return _codexSDK;
 }
 
+// ── Active Codex sessions (cleanup stale ones every 5 min) ──
+
+const activeCodexSessions = new Map();
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, session] of activeCodexSessions) {
+    if (session.status === 'completed' && now - session.completedAt > 30 * 60 * 1000) {
+      activeCodexSessions.delete(id);
+    }
+  }
+}, 5 * 60 * 1000);
+
 // ── Helpers ──
 
 function extractCodexResponse(output) {
@@ -82,8 +95,9 @@ function extractCodexResponse(output) {
   return cleaned || output.trim();
 }
 
-function buildCodexExecArgs(agent, { stdinPrompt = false } = {}) {
+function buildCodexExecArgs(agent, { stdinPrompt = false, json = false } = {}) {
   const args = ['exec', '--full-auto', '--color', 'never'];
+  if (json) args.push('--json');
   if (agent.skipGitRepoCheck !== false) args.push('--skip-git-repo-check');
   if (agent.model) args.push('--model', agent.model);
   if (agent.codexArgs) args.push(...agent.codexArgs.split(/\s+/).filter(Boolean));
@@ -91,8 +105,9 @@ function buildCodexExecArgs(agent, { stdinPrompt = false } = {}) {
   return args;
 }
 
-function buildCodexExecShellCommand(agent, { stdinPrompt = false } = {}) {
+function buildCodexExecShellCommand(agent, { stdinPrompt = false, json = false } = {}) {
   const parts = ['codex', 'exec', '--full-auto', '--color', 'never'];
+  if (json) parts.push('--json');
   if (agent.skipGitRepoCheck !== false) parts.push('--skip-git-repo-check');
   if (agent.model) parts.push('--model', shellQuote(agent.model));
   if (agent.codexArgs) parts.push(agent.codexArgs);
@@ -253,8 +268,10 @@ async function streamCodexWithAgentsSDK(event, requestId, agent, userMsg) {
   }
 
   const abortController = new AbortController();
+  const session = { status: 'running', startTime: Date.now(), abortController };
+  activeCodexSessions.set(requestId, session);
   activeClaudeProcs.set(requestId, {
-    abort: () => abortController.abort(),
+    abort: () => { session.status = 'aborted'; abortController.abort(); },
   });
 
   const forwarder = createCodexEventForwarder(event, requestId);
@@ -308,6 +325,8 @@ async function streamCodexWithAgentsSDK(event, requestId, agent, userMsg) {
       forwarder.markContentSent();
     }
 
+    session.status = 'completed';
+    session.completedAt = Date.now();
     event.sender.send('agent:stream-done', requestId, { sessionId: context.codexThreadId || forwarder.threadId || null });
     return true;
   } finally {
@@ -331,9 +350,11 @@ async function streamCodexWithCodexSDK(event, requestId, agent, userMsg) {
   }
   const abortController = new AbortController();
   const forwarder = createCodexEventForwarder(event, requestId);
+  const session = { status: 'running', startTime: Date.now(), abortController };
+  activeCodexSessions.set(requestId, session);
 
   activeClaudeProcs.set(requestId, {
-    abort: () => abortController.abort(),
+    abort: () => { session.status = 'aborted'; abortController.abort(); },
   });
 
   try {
@@ -341,6 +362,8 @@ async function streamCodexWithCodexSDK(event, requestId, agent, userMsg) {
     for await (const codexEvent of events) {
       forwarder.handle(codexEvent);
     }
+    session.status = 'completed';
+    session.completedAt = Date.now();
     event.sender.send('agent:stream-done', requestId, { sessionId: thread.id || forwarder.threadId || null });
   } finally {
     activeClaudeProcs.delete(requestId);
@@ -407,60 +430,104 @@ async function streamCodexLocal(event, requestId, agent, messages) {
     // Auth file might be corrupted or inaccessible
   }
 
-  // If we have ChatGPT auth, use the codex CLI
+  // If we have ChatGPT auth, use the codex CLI with JSONL event streaming
   if (hasCodexAuth) {
     const codexPath = agent.codexPath || 'codex';
     const workDir = agent.workDir || process.env.HOME;
 
-    return new Promise((resolve, reject) => {
-      const args = buildCodexExecArgs(agent, { stdinPrompt: true });
+    return new Promise((resolve) => {
+      const args = buildCodexExecArgs(agent, { stdinPrompt: true, json: true });
 
-      // Use Codex's non-interactive entrypoint; the default TUI requires a TTY.
       const proc = spawn(codexPath, args, {
         env: { ...getLoginEnv() },
         cwd: workDir,
-        stdio: ['pipe', 'pipe', 'pipe']
+        stdio: ['pipe', 'pipe', 'pipe'],
       });
 
-      // Send the message via stdin
       proc.stdin.write(lastUserMsg.content);
       proc.stdin.end();
 
+      const forwarder = createCodexEventForwarder(event, requestId);
       let buffer = '';
       let stderrBuf = '';
-      let sentAnyContent = false;
+      let settled = false;
+
+      activeClaudeProcs.set(requestId, {
+        abort: () => proc.kill(),
+      });
 
       proc.stdout.on('data', (data) => {
-        const text = data.toString();
-        // Send raw output as it comes
-        event.sender.send('agent:stream-chunk', requestId, text);
-        sentAnyContent = true;
+        buffer += data.toString();
+        const lines = buffer.split('\n');
+        buffer = lines.pop(); // keep incomplete last line
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const evt = JSON.parse(line);
+            forwarder.handle(evt);
+          } catch {
+            // Not JSON — strip ANSI and send as raw text
+            const cleaned = line
+              .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
+              .replace(/\r/g, '');
+            if (cleaned.trim()) {
+              event.sender.send('agent:stream-chunk', requestId, cleaned + '\n');
+              forwarder.markContentSent();
+            }
+          }
+        }
       });
 
       proc.stderr.on('data', (data) => {
         stderrBuf += data.toString();
       });
 
+      // Activity-based timeout — resets on any stdout/stderr data
       const timeout = agent.timeout || 300000;
       let timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
         proc.kill();
-        event.sender.send('agent:stream-error', requestId, 'Command timeout');
+        event.sender.send('agent:stream-error', requestId, 'Codex command timeout');
         resolve();
       }, timeout);
 
-      proc.on('close', (code) => {
+      const resetTimer = () => {
         clearTimeout(timer);
-        if (!sentAnyContent && code !== 0 && stderrBuf.trim()) {
+        timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          proc.kill();
+          event.sender.send('agent:stream-error', requestId, 'Codex command timeout');
+          resolve();
+        }, timeout);
+      };
+      proc.stdout.on('data', resetTimer);
+      proc.stderr.on('data', resetTimer);
+
+      proc.on('close', (code) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        activeClaudeProcs.delete(requestId);
+
+        if (!forwarder.sentAnyContent && code !== 0 && stderrBuf.trim()) {
           const errMsg = stderrBuf.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').trim();
           event.sender.send('agent:stream-error', requestId, errMsg || `Codex exited with code ${code}`);
         } else {
-          event.sender.send('agent:stream-done', requestId, {});
+          event.sender.send('agent:stream-done', requestId, {
+            sessionId: forwarder.threadId || null,
+          });
         }
         resolve();
       });
 
       proc.on('error', (err) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
+        activeClaudeProcs.delete(requestId);
         event.sender.send('agent:stream-error', requestId, err.message);
         resolve();
       });
@@ -804,23 +871,115 @@ async function streamCodexSSH(event, requestId, agent, messages) {
     return;
   }
 
-  // Feed the prompt through stdin so arbitrary user text cannot break the
-  // remote shell command and Codex gets the same non-interactive mode locally.
-  const cmd = `${buildRemoteCdCommand(workDir)} && printf %s ${shellQuote(lastUserMsg.content)} | ${buildCodexExecShellCommand(agent, { stdinPrompt: true })}`;
+  // Use --json for JSONL event streaming, pipe prompt via stdin
+  const cmd = `${buildRemoteCdCommand(workDir)} && printf %s ${shellQuote(lastUserMsg.content)} | ${buildCodexExecShellCommand(agent, { stdinPrompt: true, json: true })}`;
 
-  try {
-    const output = await streamSSHCommand(agent, cmd, event, requestId, 600000);
-    // streamSSHCommand handles sending chunks and done event
-  } catch (err) {
-    const msg = err.message || '';
-    if (msg.includes('401') || msg.includes('authentication')) {
-      event.sender.send('agent:stream-error', requestId, 'Invalid API key on remote. Check OPENAI_API_KEY.');
-    } else if (msg.includes('429')) {
-      event.sender.send('agent:stream-error', requestId, 'Rate limit exceeded. Please try again later.');
-    } else {
-      event.sender.send('agent:stream-error', requestId, msg);
+  const sshUser = agent.sshUser || 'root';
+  const sshHost = agent.sshHost;
+  const sshPort = agent.sshPort || 22;
+  const sshKey = agent.sshKey || '';
+
+  const sshArgs = [
+    '-o', 'StrictHostKeyChecking=no',
+    '-o', 'ConnectTimeout=10',
+    '-p', String(sshPort),
+  ];
+  if (sshKey) sshArgs.push('-i', sshKey);
+  sshArgs.push(`${sshUser}@${sshHost}`, `bash -l -c ${JSON.stringify(cmd)}`);
+
+  const proc = spawn('ssh', sshArgs);
+  const forwarder = createCodexEventForwarder(event, requestId);
+  let buffer = '';
+  let stderrOutput = '';
+  let settled = false;
+
+  activeClaudeProcs.set(requestId, {
+    abort: () => proc.kill(),
+  });
+
+  proc.stdout.on('data', (chunk) => {
+    buffer += chunk.toString();
+    const lines = buffer.split('\n');
+    buffer = lines.pop(); // keep incomplete last line
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const evt = JSON.parse(line);
+        forwarder.handle(evt);
+      } catch {
+        // Not JSON — strip ANSI and send as raw text
+        const cleaned = line
+          .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
+          .replace(/\r/g, '');
+        if (cleaned.trim()) {
+          event.sender.send('agent:stream-chunk', requestId, cleaned + '\n');
+          forwarder.markContentSent();
+        }
+      }
     }
-  }
+  });
+
+  proc.stderr.on('data', (chunk) => {
+    const text = chunk.toString();
+    if (!text.includes('Warning:') && !text.includes('Permanently added')) {
+      stderrOutput += text;
+    }
+  });
+
+  // Activity-based timeout — resets on any output
+  let timer = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    proc.kill();
+    event.sender.send('agent:stream-error', requestId, 'SSH command timeout');
+  }, 600000);
+
+  const resetTimer = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      proc.kill();
+      event.sender.send('agent:stream-error', requestId, 'SSH command timeout');
+    }, 600000);
+  };
+  proc.stdout.on('data', resetTimer);
+  proc.stderr.on('data', resetTimer);
+
+  return new Promise((resolve) => {
+    proc.on('close', (code) => {
+      if (settled) return resolve();
+      settled = true;
+      clearTimeout(timer);
+      activeClaudeProcs.delete(requestId);
+
+      if (code !== 0 && !forwarder.sentAnyContent && stderrOutput.trim()) {
+        const errMsg = stderrOutput.trim();
+        if (errMsg.includes('401') || errMsg.includes('authentication')) {
+          event.sender.send('agent:stream-error', requestId, 'Invalid API key on remote. Check OPENAI_API_KEY.');
+        } else if (errMsg.includes('429')) {
+          event.sender.send('agent:stream-error', requestId, 'Rate limit exceeded. Please try again later.');
+        } else {
+          event.sender.send('agent:stream-error', requestId, errMsg);
+        }
+      } else {
+        event.sender.send('agent:stream-done', requestId, {
+          sessionId: forwarder.threadId || null,
+        });
+      }
+      resolve();
+    });
+
+    proc.on('error', (err) => {
+      if (settled) return resolve();
+      settled = true;
+      clearTimeout(timer);
+      activeClaudeProcs.delete(requestId);
+      event.sender.send('agent:stream-error', requestId, err.message);
+      resolve();
+    });
+  });
 }
 
 async function pingCodexSSH(agent) {

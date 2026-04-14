@@ -5,38 +5,11 @@ const { setMainWindow, activeClaudeProcs } = require('./lib/state');
 const { makeRequest } = require('./lib/http');
 
 // Providers
-const { chatOpenClaw, streamOpenClaw, pingOpenClaw, chatOpenClawLocal, pingOpenClawLocal } = require('./providers/openclaw');
-const { chatHermes, pingHermes, chatHermesLocal, pingHermesLocal } = require('./providers/hermes');
-const { chatClaudeCode, streamClaudeCode, pingClaudeCode, chatClaudeCodeSSH, streamClaudeCodeSSH, pingClaudeCodeSSH, getClaudeSDK } = require('./providers/claude-code');
+const { chatOpenClaw, streamOpenClaw, pingOpenClaw, chatOpenClawLocal, pingOpenClawLocal } = require('./providers/openclaw-improved');
+const { chatHermes, streamHermes, pingHermes, chatHermesLocal, streamHermesLocal, pingHermesLocal } = require('./providers/hermes');
+const { chatClaudeCode, streamClaudeCode, pingClaudeCode, chatClaudeCodeSSH, streamClaudeCodeSSH, pingClaudeCodeSSH, resolveToolApproval } = require('./providers/claude-code');
 const { chatCodexLocal, streamCodexLocal, pingCodexLocal, chatCodexSSH, streamCodexSSH, pingCodexSSH } = require('./providers/codex');
 const { chatOpenAI, streamOpenAI } = require('./providers/openai-compat');
-
-// Pre-initialize Claude Code SDK on app startup with retries
-// This runs asynchronously and doesn't block the app startup
-async function ensureClaudeSDKReady() {
-  const maxRetries = 5;
-  let retryDelay = 1000;
-
-  for (let i = 1; i <= maxRetries; i++) {
-    try {
-      await getClaudeSDK();
-      console.log(`[Main] Claude Code SDK pre-warmed successfully (attempt ${i})`);
-      return true;
-    } catch (err) {
-      console.warn(`[Main] Claude Code SDK pre-warm attempt ${i}/${maxRetries} failed:`, err.message);
-      if (i < maxRetries) {
-        console.log(`[Main] Retrying in ${retryDelay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, retryDelay));
-        retryDelay = Math.min(retryDelay * 1.5, 5000); // Exponential backoff up to 5 seconds
-      }
-    }
-  }
-  console.error('[Main] Claude Code SDK failed to initialize after all attempts');
-  return false;
-}
-
-// Start SDK initialization immediately and keep retrying
-ensureClaudeSDKReady();
 
 // Feature modules
 const { registerAuthHandlers } = require('./auth');
@@ -124,17 +97,8 @@ ipcMain.on('agent:chat-stream', async (event, requestId, agent, messages) => {
     else if (agent.provider === 'codex-ssh') await streamCodexSSH(event, requestId, agent, messages);
     else if (agent.provider === 'openclaw') await streamOpenClaw(event, requestId, agent, messages);
     else if (agent.provider === 'openclaw-local') await streamOpenClaw(event, requestId, agent, messages);
-    else if (agent.provider === 'hermes' || agent.provider === 'hermes-local') {
-      const chatFn = agent.provider === 'hermes' ? chatHermes : chatHermesLocal;
-      const res = await chatFn(agent, messages);
-      if (res.error) {
-        event.sender.send('agent:stream-error', requestId, res.error);
-      } else {
-        if (res.thinking) event.sender.send('agent:stream-thinking', requestId, res.thinking);
-        if (res.content) event.sender.send('agent:stream-chunk', requestId, res.content);
-        event.sender.send('agent:stream-done', requestId, { sessionId: res.sessionId || null });
-      }
-    }
+    else if (agent.provider === 'hermes') await streamHermes(event, requestId, agent, messages);
+    else if (agent.provider === 'hermes-local') await streamHermesLocal(event, requestId, agent, messages);
     else await streamOpenAI(event, requestId, agent, messages);
   } catch (err) {
     event.sender.send('agent:stream-error', requestId, err.message);
@@ -147,21 +111,24 @@ ipcMain.on('agent:permission-response', (_event, requestId, toolUseId, decision)
   const handle = activeClaudeProcs.get(requestId);
   if (!handle) return;
 
-  if (handle.resolvePermission) {
-    handle.resolvePermission(toolUseId, decision);
+  // SDK-based sessions use Promise callbacks
+  if (handle.sdkSession && handle.resolveToolApproval) {
+    resolveToolApproval(toolUseId, decision);
     return;
   }
 
-  if (handle.stdin && !handle.killed) {
-    try {
-      const response = JSON.stringify({
-        type: 'tool_permission_response',
-        tool_use_id: toolUseId,
-        decision,
-      });
-      handle.stdin.write(response + '\n');
-    } catch { /* process may have exited */ }
-  }
+  // CLI-based sessions write to stdin
+  if (!handle.stdin) return;
+  try {
+    const allow = decision.behavior === 'allow';
+    const response = JSON.stringify({
+      type: 'control_response',
+      request_id: toolUseId,
+      allow,
+      ...(!allow && decision.message ? { reason: decision.message } : {}),
+    });
+    handle.stdin.write(response + '\n');
+  } catch { /* process may have exited */ }
 });
 
 // ── Agent Ping IPC ──

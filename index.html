@@ -1709,7 +1709,7 @@
                       )}
                     </div>
                     <div className="agent-provider">
-                      {agent.provider === 'claude-code' ? 'Claude Code' : agent.provider === 'claude-code-ssh' ? 'Claude Code SSH' : agent.provider === 'openclaw-local' ? 'OpenClaw Local' : agent.provider === 'openclaw' ? 'OpenClaw SSH' : agent.provider === 'hermes-local' ? 'Hermes Local' : agent.provider === 'hermes' ? 'Hermes SSH' : agent.provider === 'codex' ? 'Codex' : agent.provider === 'codex-ssh' ? 'Codex SSH' : agent.provider === 'openai-compat' ? 'OpenAI Compat' : agent.provider}
+                      {agent.provider === 'claude-code' ? 'Claude Code' : agent.provider === 'claude-code-ssh' ? 'Claude Code SSH' : agent.provider === 'openclaw-local' ? 'OpenClaw Local' : agent.provider === 'openclaw' ? 'OpenClaw' : agent.provider === 'hermes-local' ? 'Hermes Local' : agent.provider === 'hermes' ? 'Hermes SSH' : agent.provider === 'codex' ? 'Codex' : agent.provider === 'codex-ssh' ? 'Codex SSH' : agent.provider === 'openai-compat' ? 'OpenAI Compat' : agent.provider}
                       {agent.model ? ` / ${agent.model}` : ''}
                     </div>
                   </div>
@@ -1858,6 +1858,12 @@
         display = `Grep: ${input.pattern}`;
       } else if (tool === 'Glob' && input?.pattern) {
         display = `Glob: ${input.pattern}`;
+      } else if (tool === 'exec' && input?.command) {
+        display = `$ ${input.command.length > 100 ? input.command.slice(0, 100) + '...' : input.command}`;
+      } else if (['read', 'write', 'edit', 'apply_patch'].includes(tool) && input?.path) {
+        display = `${tool}: ${input.path}`;
+      } else if (['web_search', 'web_fetch', 'memory_search', 'memory_get', 'image'].includes(tool)) {
+        display = tool.replace(/_/g, ' ');
       }
       return (
         <div className={`tool-use-indicator${denied ? ' denied' : ''}`}>
@@ -2680,8 +2686,8 @@
     const PRESETS = [
       { name: 'Claude Code (Local)', emoji: 'CC', provider: 'claude-code', model: '', workDir: '', providerClass: 'provider-claude-code', desc: 'Local Claude Code CLI instance' },
       { name: 'Claude Code (SSH)', emoji: 'CC', provider: 'claude-code-ssh', sshHost: '', sshUser: 'root', model: '', workDir: '', providerClass: 'provider-claude-code', desc: 'Claude Code on a remote server' },
-      { name: 'OpenClaw (Local)', emoji: 'OC', provider: 'openclaw-local', model: '', providerClass: 'provider-openclaws', desc: 'Local OpenClaw CLI instance' },
-      { name: 'OpenClaw (SSH)', emoji: 'OC', provider: 'openclaw', sshHost: '', sshUser: 'root', model: '', providerClass: 'provider-openclaws', desc: 'OpenClaw on a remote VPS' },
+      { name: 'OpenClaw (Local)', emoji: 'OC', provider: 'openclaw-local', model: '', providerClass: 'provider-openclaws', desc: 'Local OpenClaw gateway' },
+      { name: 'OpenClaw (Remote)', emoji: 'OC', provider: 'openclaw', sshHost: '', sshUser: 'root', model: '', providerClass: 'provider-openclaws', desc: 'Remote OpenClaw gateway' },
       { name: 'Hermes (Local)', emoji: 'H', provider: 'hermes-local', model: '', providerClass: 'provider-hermes', desc: 'Local Hermes Agent instance' },
       { name: 'Hermes (SSH)', emoji: 'H', provider: 'hermes', sshHost: '', sshUser: 'root', model: '', providerClass: 'provider-hermes', desc: 'Hermes on a remote VPS' },
       { name: 'Codex (Local)', emoji: 'CX', provider: 'codex', model: '', skipGitRepoCheck: true, providerClass: 'provider-codex', desc: 'Local OpenAI Codex CLI agent' },
@@ -2812,7 +2818,7 @@
                     <option value="claude-code">Claude Code (Local)</option>
                     <option value="claude-code-ssh">Claude Code (SSH)</option>
                     <option value="openclaw-local">OpenClaw (Local)</option>
-                    <option value="openclaw">OpenClaw (SSH)</option>
+                    <option value="openclaw">OpenClaw (Remote)</option>
                     <option value="hermes-local">Hermes (Local)</option>
                     <option value="hermes">Hermes (SSH)</option>
                     <option value="codex">Codex (Local)</option>
@@ -2920,16 +2926,16 @@
                 {form.provider === 'openclaw-local' && (
                   <>
                     <div className="form-row">
-                      <label>Working Directory (optional)</label>
-                      <input value={form.workDir || ''} onChange={e => setForm(f => ({ ...f, workDir: e.target.value }))} placeholder="e.g. ~/projects/myapp (blank = home dir)" />
+                      <label>Gateway Token (optional for local)</label>
+                      <input type="password" value={form.apiKey || ''} onChange={e => setForm(f => ({ ...f, apiKey: e.target.value }))} placeholder="Leave blank if gateway auth is disabled" />
                     </div>
                     <div className="form-row">
                       <label>Agent ID (optional, uses default if blank)</label>
                       <input value={form.openclawAgent || ''} onChange={e => setForm(f => ({ ...f, openclawAgent: e.target.value }))} placeholder="e.g. main, ops, coding" />
                     </div>
                     <div className="form-row">
-                      <label>Model (optional)</label>
-                      <input value={form.model || ''} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} placeholder="Uses OpenClaw default" />
+                      <label>Model Override (optional)</label>
+                      <input value={form.model || ''} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} placeholder="e.g. openai/gpt-4o, anthropic/claude-sonnet" />
                     </div>
                   </>
                 )}
@@ -2958,8 +2964,8 @@
                 {form.provider === 'openclaw' && (
                   <>
                     <div className="form-row">
-                      <label>SSH Host</label>
-                      <input value={form.sshHost || ''} onChange={e => setForm(f => ({ ...f, sshHost: e.target.value }))} placeholder="157.180.23.7" />
+                      <label>Host</label>
+                      <input value={form.sshHost || ''} onChange={e => setForm(f => ({ ...f, sshHost: e.target.value }))} placeholder="e.g. 157.180.23.7 or my-vps.example.com" />
                     </div>
                     <div style={{ display: 'flex', gap: 8 }}>
                       <div className="form-row" style={{ flex: 1 }}>
@@ -2972,16 +2978,20 @@
                       </div>
                     </div>
                     <div className="form-row">
-                      <label>SSH Key Path (optional, uses default if blank)</label>
-                      <input value={form.sshKey || ''} onChange={e => setForm(f => ({ ...f, sshKey: e.target.value }))} placeholder="~/.ssh/id_rsa" />
+                      <label>SSH Key Path (optional)</label>
+                      <input value={form.sshKey || ''} onChange={e => setForm(f => ({ ...f, sshKey: e.target.value }))} placeholder="~/.ssh/id_rsa (blank = default key)" />
                     </div>
                     <div className="form-row">
-                      <label>Gateway Token</label>
-                      <input type="password" value={form.apiKey || ''} onChange={e => setForm(f => ({ ...f, apiKey: e.target.value }))} placeholder="Your OpenClaw gateway token" />
+                      <label>Gateway Token (optional)</label>
+                      <input type="password" value={form.apiKey || ''} onChange={e => setForm(f => ({ ...f, apiKey: e.target.value }))} placeholder="Leave blank if gateway auth is disabled" />
                     </div>
                     <div className="form-row">
                       <label>Agent ID (optional, uses default agent if blank)</label>
                       <input value={form.openclawAgent || ''} onChange={e => setForm(f => ({ ...f, openclawAgent: e.target.value }))} placeholder="e.g. ops, main, coding" />
+                    </div>
+                    <div className="form-row">
+                      <label>Model Override (optional)</label>
+                      <input value={form.model || ''} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} placeholder="e.g. openai/gpt-4o, anthropic/claude-sonnet" />
                     </div>
                   </>
                 )}
