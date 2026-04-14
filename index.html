@@ -786,6 +786,14 @@
     .tool-approval-actions .btn-approve:hover {
       filter: brightness(1.1);
     }
+    .tool-approval-actions .btn-always-allow {
+      background: color-mix(in srgb, #22c55e 15%, transparent);
+      color: #22c55e;
+      border-color: color-mix(in srgb, #22c55e 40%, transparent);
+    }
+    .tool-approval-actions .btn-always-allow:hover {
+      background: color-mix(in srgb, #22c55e 25%, transparent);
+    }
     .tool-approval-actions .btn-deny {
       background: color-mix(in srgb, #ef4444 12%, transparent);
       color: #ef4444;
@@ -1900,7 +1908,7 @@
       );
     }
 
-    function ToolApprovalRequest({ request, onApprove, onDeny, resolved }) {
+    function ToolApprovalRequest({ request, onApprove, onAlwaysAllow, onDeny, resolved }) {
       let detail = request.tool;
       if (request.tool === 'Bash' && request.input?.command) {
         detail = `$ ${request.input.command}`;
@@ -1929,6 +1937,7 @@
           {!resolved && (
             <div className="tool-approval-actions">
               <button className="btn-approve" onClick={() => onApprove(request)}>Allow</button>
+              <button className="btn-always-allow" onClick={() => onAlwaysAllow(request)}>Always Allow</button>
               <button className="btn-deny" onClick={() => onDeny(request)}>Deny</button>
             </div>
           )}
@@ -1949,6 +1958,7 @@
       const [resolvedPerms, setResolvedPerms] = useState({}); // toolUseId -> 'approved'|'denied'
       const [lastUserMessage, setLastUserMessage] = useState('');
       const [sessionAllowedTools, setSessionAllowedTools] = useState([]);
+      const [alwaysAllowedTools, setAlwaysAllowedTools] = useState(new Set()); // tools auto-approved for this session
       const [slashCommands, setSlashCommands] = useState([]);
       const [showSlash, setShowSlash] = useState(false);
       const [slashIdx, setSlashIdx] = useState(0);
@@ -1963,6 +1973,7 @@
       const dragCounter = useRef(0);
       const toolUsesRef = useRef([]);
       const activeRequestIdRef = useRef(null);
+      const alwaysAllowedToolsRef = useRef(new Set());
       // Keep refs to the latest agent/isActive so stream callbacks never use a stale closure
       const agentRef = useRef(agent);
       agentRef.current = agent;
@@ -2088,6 +2099,18 @@
 
         const offPermRequest = window.agentHub.onPermissionRequest((id, request) => {
           if (cancelled || id !== activeRequestIdRef.current) return;
+
+          // Auto-approve if this tool is in the "always allow" set
+          if (alwaysAllowedToolsRef.current.has(request.tool)) {
+            window.agentHub.sendPermissionResponse(id, request.toolUseId, {
+              behavior: 'allow',
+              updatedInput: request.input,
+            });
+            setPermRequests(prev => [...prev, { ...request, requestId: id }]);
+            setResolvedPerms(prev => ({ ...prev, [request.toolUseId]: 'approved' }));
+            return;
+          }
+
           setPermRequests(prev => [...prev, { ...request, requestId: id }]);
 
           // Increment completion status if user is NOT viewing this agent
@@ -2445,6 +2468,20 @@
         setResolvedPerms(prev => ({ ...prev, [request.toolUseId]: 'approved' }));
       };
 
+      const handleAlwaysAllowRequest = (request) => {
+        const reqId = activeRequestIdRef.current;
+        if (!reqId) return;
+        // Add tool to always-allowed set
+        alwaysAllowedToolsRef.current.add(request.tool);
+        setAlwaysAllowedTools(prev => new Set([...prev, request.tool]));
+        // Approve the current request
+        window.agentHub.sendPermissionResponse(reqId, request.toolUseId, {
+          behavior: 'allow',
+          updatedInput: request.input,
+        });
+        setResolvedPerms(prev => ({ ...prev, [request.toolUseId]: 'approved' }));
+      };
+
       const handleDenyRequest = (request) => {
         const reqId = activeRequestIdRef.current;
         if (!reqId) return;
@@ -2587,6 +2624,7 @@
                         key={pr.toolUseId}
                         request={pr}
                         onApprove={handleApproveRequest}
+                        onAlwaysAllow={handleAlwaysAllowRequest}
                         onDeny={handleDenyRequest}
                         resolved={resolvedPerms[pr.toolUseId] || null}
                       />
