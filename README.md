@@ -98,14 +98,6 @@ When you launch Agent Hub, you can add agents by clicking the "+" button and con
 1. Select an agent from the sidebar
 2. Type your message in the input field
 3. Press Enter or click Send
-4. View streaming responses in real-time
-
-### Permission Approval (Claude Code)
-When using Claude Code with permission mode enabled:
-1. The agent will request permission for operations
-2. Review the tool and parameters in the modal
-3. Click "Approve" or "Deny" with optional reason
-4. The operation proceeds based on your decision
 
 ### Slash Commands
 Type `/` in the message input to see available commands:
