@@ -7,7 +7,7 @@ const { makeRequest } = require('./lib/http');
 // Providers
 const { chatOpenClaw, streamOpenClaw, pingOpenClaw, chatOpenClawLocal, pingOpenClawLocal } = require('./providers/openclaw-improved');
 const { chatHermes, streamHermes, pingHermes, chatHermesLocal, streamHermesLocal, pingHermesLocal } = require('./providers/hermes');
-const { chatClaudeCode, streamClaudeCode, pingClaudeCode, chatClaudeCodeSSH, streamClaudeCodeSSH, pingClaudeCodeSSH } = require('./providers/claude-code');
+const { chatClaudeCode, streamClaudeCode, pingClaudeCode, chatClaudeCodeSSH, streamClaudeCodeSSH, pingClaudeCodeSSH, resolveToolApproval } = require('./providers/claude-code');
 const { chatCodexLocal, streamCodexLocal, pingCodexLocal, chatCodexSSH, streamCodexSSH, pingCodexSSH } = require('./providers/codex');
 const { chatOpenAI, streamOpenAI } = require('./providers/openai-compat');
 
@@ -109,8 +109,16 @@ ipcMain.on('agent:chat-stream', async (event, requestId, agent, messages) => {
 
 ipcMain.on('agent:permission-response', (_event, requestId, toolUseId, decision) => {
   const handle = activeClaudeProcs.get(requestId);
-  if (!handle || !handle.stdin) return;
+  if (!handle) return;
 
+  // SDK-based sessions use Promise callbacks
+  if (handle.sdkSession && handle.resolveToolApproval) {
+    resolveToolApproval(toolUseId, decision);
+    return;
+  }
+
+  // CLI-based sessions write to stdin
+  if (!handle.stdin) return;
   try {
     const allow = decision.behavior === 'allow';
     const response = JSON.stringify({

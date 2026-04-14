@@ -62,6 +62,19 @@ async function getCodexSDK() {
   return _codexSDK;
 }
 
+// ── Active Codex sessions (cleanup stale ones every 5 min) ──
+
+const activeCodexSessions = new Map();
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, session] of activeCodexSessions) {
+    if (session.status === 'completed' && now - session.completedAt > 30 * 60 * 1000) {
+      activeCodexSessions.delete(id);
+    }
+  }
+}, 5 * 60 * 1000);
+
 // ── Helpers ──
 
 function extractCodexResponse(output) {
@@ -255,8 +268,10 @@ async function streamCodexWithAgentsSDK(event, requestId, agent, userMsg) {
   }
 
   const abortController = new AbortController();
+  const session = { status: 'running', startTime: Date.now(), abortController };
+  activeCodexSessions.set(requestId, session);
   activeClaudeProcs.set(requestId, {
-    abort: () => abortController.abort(),
+    abort: () => { session.status = 'aborted'; abortController.abort(); },
   });
 
   const forwarder = createCodexEventForwarder(event, requestId);
@@ -310,6 +325,8 @@ async function streamCodexWithAgentsSDK(event, requestId, agent, userMsg) {
       forwarder.markContentSent();
     }
 
+    session.status = 'completed';
+    session.completedAt = Date.now();
     event.sender.send('agent:stream-done', requestId, { sessionId: context.codexThreadId || forwarder.threadId || null });
     return true;
   } finally {
@@ -333,9 +350,11 @@ async function streamCodexWithCodexSDK(event, requestId, agent, userMsg) {
   }
   const abortController = new AbortController();
   const forwarder = createCodexEventForwarder(event, requestId);
+  const session = { status: 'running', startTime: Date.now(), abortController };
+  activeCodexSessions.set(requestId, session);
 
   activeClaudeProcs.set(requestId, {
-    abort: () => abortController.abort(),
+    abort: () => { session.status = 'aborted'; abortController.abort(); },
   });
 
   try {
@@ -343,6 +362,8 @@ async function streamCodexWithCodexSDK(event, requestId, agent, userMsg) {
     for await (const codexEvent of events) {
       forwarder.handle(codexEvent);
     }
+    session.status = 'completed';
+    session.completedAt = Date.now();
     event.sender.send('agent:stream-done', requestId, { sessionId: thread.id || forwarder.threadId || null });
   } finally {
     activeClaudeProcs.delete(requestId);

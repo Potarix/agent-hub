@@ -3,7 +3,279 @@ const { runSSHCommand } = require('../lib/ssh');
 const { runLocalCommand, getLoginEnv } = require('../lib/local');
 const { activeClaudeProcs } = require('../lib/state');
 
-// ── Strip ANSI / spinner noise ────────────────────────────────────────────
+// ── SDK lazy loader ──────────────────────────────────────────────────────
+
+let _claudeSDK = null;
+async function getClaudeSDK() {
+  if (!_claudeSDK) {
+    try {
+      _claudeSDK = await import('@anthropic-ai/claude-agent-sdk');
+    } catch {
+      return null;
+    }
+  }
+  return _claudeSDK;
+}
+
+// ── Pending tool approval tracking (SDK permission flow) ─────────────────
+
+const pendingToolApprovals = new Map();
+
+function waitForToolApproval(approvalId) {
+  return new Promise((resolve) => {
+    pendingToolApprovals.set(approvalId, resolve);
+    // Timeout after 55s — deny by default
+    setTimeout(() => {
+      if (pendingToolApprovals.has(approvalId)) {
+        pendingToolApprovals.delete(approvalId);
+        resolve({ behavior: 'deny', message: 'Permission request timed out' });
+      }
+    }, 55000);
+  });
+}
+
+function resolveToolApproval(approvalId, decision) {
+  const resolve = pendingToolApprovals.get(approvalId);
+  if (resolve) {
+    pendingToolApprovals.delete(approvalId);
+    resolve(decision);
+  }
+}
+
+// ── Active SDK sessions ──────────────────────────────────────────────────
+
+const activeSDKSessions = new Map();
+
+// Clean up completed sessions older than 30 min
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, session] of activeSDKSessions) {
+    if (session.status === 'completed' && now - session.completedAt > 30 * 60 * 1000) {
+      activeSDKSessions.delete(id);
+    }
+  }
+}, 5 * 60 * 1000);
+
+// ── Build SDK options from agent config ──────────────────────────────────
+
+function buildSDKOptions(agent) {
+  const options = {
+    cwd: agent.workDir || process.env.HOME,
+    includePartialMessages: true,
+    tools: { type: 'preset', preset: 'claude_code' },
+  };
+
+  if (agent.model) options.model = agent.model;
+  if (agent.systemPrompt) options.systemPrompt = agent.systemPrompt;
+
+  // Permission mode
+  const perm = agent.permissionMode || 'default';
+  if (perm === 'bypassPermissions') {
+    options.permissionMode = 'bypassPermissions';
+    options.allowDangerouslySkipPermissions = true;
+  } else {
+    options.permissionMode = perm;
+  }
+
+  // Allowed tools
+  if (agent.allowedTools) {
+    options.allowedTools = agent.allowedTools.split(/[,\s]+/).filter(Boolean);
+  }
+
+  // Session resume
+  if (agent.sessionId) {
+    options.resume = agent.sessionId;
+  } else if (agent.continueSession) {
+    options.continue = true;
+  }
+
+  return options;
+}
+
+// ── SDK-based streaming chat ─────────────────────────────────────────────
+
+async function streamClaudeCodeSDK(event, requestId, agent, prompt) {
+  const sdk = await getClaudeSDK();
+  if (!sdk) return false; // SDK not available, fall back to CLI
+
+  const options = buildSDKOptions(agent);
+  const abortController = new AbortController();
+  options.abortController = abortController;
+
+  // Permission handler — sends IPC to frontend, waits for response
+  if (options.permissionMode !== 'bypassPermissions') {
+    options.canUseTool = async (toolName, toolInput, permOpts) => {
+      const approvalId = permOpts.toolUseID || `${requestId}-${Date.now()}`;
+
+      event.sender.send('agent:permission-request', requestId, {
+        toolUseId: approvalId,
+        tool: toolName,
+        input: toolInput,
+        title: permOpts.title,
+        description: permOpts.description,
+        displayName: permOpts.displayName,
+        timestamp: Date.now(),
+      });
+
+      return waitForToolApproval(approvalId);
+    };
+  }
+
+  // Track the session
+  const session = {
+    status: 'running',
+    startTime: Date.now(),
+    abort: () => abortController.abort(),
+    resolveToolApproval,
+  };
+  activeSDKSessions.set(requestId, session);
+  activeClaudeProcs.set(requestId, {
+    abort: () => abortController.abort(),
+    sdkSession: true,
+    resolveToolApproval,
+  });
+
+  let sessionId = null;
+  const seenBlocks = new Set();
+
+  try {
+    const queryInstance = sdk.query({ prompt, options });
+
+    for await (const message of queryInstance) {
+      if (!message || !message.type) continue;
+
+      // System init — capture session ID
+      if (message.type === 'system' && message.subtype === 'init') {
+        sessionId = message.session_id;
+        continue;
+      }
+
+      // Stream events — token-by-token deltas
+      if (message.type === 'stream_event' && message.event) {
+        const evt = message.event;
+        if (evt.type === 'content_block_delta') {
+          if (evt.delta?.type === 'text_delta' && evt.delta.text) {
+            event.sender.send('agent:stream-chunk', requestId, evt.delta.text);
+          }
+          if (evt.delta?.type === 'thinking_delta' && evt.delta.thinking) {
+            event.sender.send('agent:stream-thinking', requestId, evt.delta.thinking);
+          }
+        }
+        if (evt.type === 'content_block_start' && evt.index != null) {
+          seenBlocks.add(evt.index);
+        }
+        continue;
+      }
+
+      // Complete assistant messages — emit tool_use + fallback text
+      if (message.type === 'assistant' && message.message?.content) {
+        for (let i = 0; i < message.message.content.length; i++) {
+          const block = message.message.content[i];
+          if (block.type === 'tool_use') {
+            event.sender.send('agent:stream-tool-use', requestId, {
+              id: block.id,
+              tool: block.name,
+              input: block.input,
+            });
+          }
+          if (!seenBlocks.has(i)) {
+            if (block.type === 'text' && block.text) {
+              event.sender.send('agent:stream-chunk', requestId, block.text);
+            }
+            if (block.type === 'thinking' && block.thinking) {
+              event.sender.send('agent:stream-thinking', requestId, block.thinking);
+            }
+          }
+        }
+        seenBlocks.clear();
+        continue;
+      }
+
+      // Result — capture session ID
+      if (message.type === 'result') {
+        sessionId = message.session_id || sessionId;
+        continue;
+      }
+    }
+
+    session.status = 'completed';
+    session.completedAt = Date.now();
+    event.sender.send('agent:stream-done', requestId, { sessionId });
+    return true;
+  } catch (err) {
+    session.status = 'completed';
+    session.completedAt = Date.now();
+    const msg = err.message || '';
+    if (err.name === 'AbortError' || msg.includes('aborted')) {
+      event.sender.send('agent:stream-done', requestId, { sessionId });
+    } else if (msg.includes('401') || msg.includes('authentication') || msg.includes('not authenticated')) {
+      event.sender.send('agent:stream-error', requestId, 'Claude Code is not authenticated. Click Login below to sign in.');
+    } else {
+      event.sender.send('agent:stream-error', requestId, msg);
+    }
+    return true;
+  } finally {
+    activeClaudeProcs.delete(requestId);
+  }
+}
+
+// ── SDK-based non-streaming chat ─────────────────────────────────────────
+
+async function chatClaudeCodeSDK(agent, prompt) {
+  const sdk = await getClaudeSDK();
+  if (!sdk) return null; // SDK not available, fall back to CLI
+
+  const options = buildSDKOptions(agent);
+  const abortController = new AbortController();
+  options.abortController = abortController;
+
+  // For non-streaming, auto-allow tools (no UI to approve)
+  // unless bypass is set
+  if (options.permissionMode !== 'bypassPermissions') {
+    options.permissionMode = 'acceptEdits';
+  }
+
+  let sessionId = null;
+  let resultText = '';
+
+  try {
+    const queryInstance = sdk.query({ prompt, options });
+
+    for await (const message of queryInstance) {
+      if (!message || !message.type) continue;
+
+      if (message.type === 'system' && message.subtype === 'init') {
+        sessionId = message.session_id;
+        continue;
+      }
+
+      if (message.type === 'assistant' && message.message?.content) {
+        for (const block of message.message.content) {
+          if (block.type === 'text' && block.text) {
+            resultText += block.text;
+          }
+        }
+        continue;
+      }
+
+      if (message.type === 'result') {
+        sessionId = message.session_id || sessionId;
+        if (message.result) resultText = message.result;
+        continue;
+      }
+    }
+
+    return { content: resultText, sessionId };
+  } catch (err) {
+    const msg = err.message || '';
+    if (msg.includes('401') || msg.includes('authentication') || msg.includes('not authenticated')) {
+      return { error: 'Claude Code is not authenticated. Click Login below to sign in.' };
+    }
+    return { error: msg };
+  }
+}
+
+// ── Strip ANSI / spinner noise (CLI fallback) ────────────────────────────
 
 function extractClaudeCodeResponse(output) {
   try {
@@ -21,7 +293,7 @@ function extractClaudeCodeResponse(output) {
     .trim() || output.trim();
 }
 
-// ── Build CLI args from agent config ──────────────────────────────────────
+// ── Build CLI args from agent config (CLI fallback) ──────────────────────
 
 function buildCLIArgs(agent, extra = []) {
   const args = ['-p'];
@@ -54,7 +326,7 @@ function buildCLIArgs(agent, extra = []) {
   return args;
 }
 
-// ── Spawn a claude process ────────────────────────────────────────────────
+// ── Spawn a claude process (CLI fallback) ────────────────────────────────
 
 function spawnClaude(agent, args) {
   const claudePath = agent.claudePath || 'claude';
@@ -62,13 +334,21 @@ function spawnClaude(agent, args) {
   return spawn(claudePath, args, { cwd, env: getLoginEnv() });
 }
 
-// ── Non-streaming chat via CLI ────────────────────────────────────────────
+// ── Non-streaming chat (tries SDK first, falls back to CLI) ──────────────
 
 async function chatClaudeCode(agent, messages) {
   const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
   if (!lastUserMsg) return { error: 'No user message found' };
 
   const prompt = lastUserMsg.content || '';
+
+  // Try SDK first
+  if (agent.useSDK !== false) {
+    const sdkResult = await chatClaudeCodeSDK(agent, prompt);
+    if (sdkResult) return sdkResult;
+  }
+
+  // Fall back to CLI
   const args = buildCLIArgs(agent, ['--output-format', 'json']);
 
   return new Promise((resolve) => {
@@ -116,7 +396,7 @@ async function chatClaudeCode(agent, messages) {
   });
 }
 
-// ── Streaming chat via CLI ────────────────────────────────────────────────
+// ── Streaming chat (tries SDK first, falls back to CLI) ──────────────────
 
 async function streamClaudeCode(event, requestId, agent, messages) {
   const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
@@ -126,6 +406,19 @@ async function streamClaudeCode(event, requestId, agent, messages) {
   }
 
   const prompt = lastUserMsg.content || '';
+
+  // Try SDK first
+  if (agent.useSDK !== false) {
+    try {
+      const used = await streamClaudeCodeSDK(event, requestId, agent, prompt);
+      if (used) return;
+    } catch (err) {
+      // SDK failed to load or crashed — fall through to CLI
+      activeClaudeProcs.delete(requestId);
+    }
+  }
+
+  // Fall back to CLI spawning
   const args = buildCLIArgs(agent, [
     '--input-format', 'stream-json',
     '--output-format', 'stream-json',
@@ -299,7 +592,12 @@ async function pingClaudeCode(agent) {
   try {
     const claudePath = agent.claudePath || 'claude';
     const output = await runLocalCommand(claudePath, ['--version'], { timeout: 10000 });
-    return { online: true, info: output.trim() };
+
+    // Check if SDK is available
+    const sdk = await getClaudeSDK();
+    const sdkInfo = sdk ? ' (SDK)' : ' (CLI)';
+
+    return { online: true, info: output.trim() + sdkInfo };
   } catch (err) {
     return { online: false, error: err.message };
   }
@@ -580,4 +878,7 @@ module.exports = {
   chatClaudeCodeSSH,
   streamClaudeCodeSSH,
   pingClaudeCodeSSH,
+  // SDK-specific exports for permission handling
+  resolveToolApproval,
+  activeSDKSessions,
 };
