@@ -8,15 +8,13 @@ Imessage for your AI Agents. Chat with your hermes, Openclaw, Codex, and claude 
 
 ## 🎯 Features
 
-- **Multi-Provider Support**: Connect to 10+ AI providers including Claude Code, OpenAI, Codex, Hermes, and OpenClaw
+- **Multi-Provider Support**: Connect to AI providers including Claude Code, OpenAI, Codex, Hermes, and OpenClaw
 - **Unified Interface**: Single dashboard to manage all your AI conversations
 - **Streaming Responses**: Real-time streaming for supported providers
 - **Permission Management**: Advanced permission approval system for Claude Code operations
 - **SSH Remote Support**: Connect to remote AI agents via SSH
-- **Dark/Light Mode**: Automatic theme switching based on system preferences
 - **Slash Commands**: Built-in commands for common operations
 - **Session Management**: Maintain conversation context across sessions
-- **Native Performance**: Built with Electron for optimal desktop experience
 
 ## 📋 Prerequisites
 
