@@ -56,6 +56,233 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
+// ── SSH spawner for SDK (runs Claude Code on remote host via SSH) ────────
+
+function buildSSHSpawner(agent) {
+  const sshUser = agent.sshUser || 'root';
+  const sshHost = agent.sshHost;
+  const sshPort = agent.sshPort || 22;
+  const sshKey = agent.sshKey || '';
+
+  return (options) => {
+    // The SDK passes the local node binary + local cli.js path as command/args,
+    // which don't exist on the remote. Replace with the remote `claude` binary
+    // and only keep the CLI flags (skip the local script path).
+    const claudePath = agent.claudePath || 'claude';
+    const cliFlags = (options.args || []).filter(a => !a.endsWith('.js') && !a.endsWith('.mjs'));
+    const remoteCmd = [claudePath, ...cliFlags]
+      .map(a => `'${a.replace(/'/g, "'\\''")}'`)
+      .join(' ');
+    const workDir = agent.workDir || '~';
+    const wrappedCmd = `cd ${workDir} && ${remoteCmd}`;
+
+    const sshArgs = [
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'ConnectTimeout=10',
+      '-p', String(sshPort),
+    ];
+    if (sshKey) sshArgs.push('-i', sshKey);
+    sshArgs.push(`${sshUser}@${sshHost}`, `bash -l -c ${JSON.stringify(wrappedCmd)}`);
+
+    const proc = spawn('ssh', sshArgs);
+
+    // The SDK expects a SpawnedProcess interface — Node's ChildProcess satisfies it
+    return proc;
+  };
+}
+
+// ── Build SDK options from agent config (with optional SSH spawner) ──────
+
+function buildSDKOptionsForSSH(agent) {
+  const options = buildSDKOptions(agent);
+
+  // Override cwd — the remote workDir is handled by the SSH spawner's cd
+  options.cwd = agent.workDir || '/root';
+
+  // Attach the custom SSH spawner so the SDK runs claude on the remote host
+  options.spawnClaudeCodeProcess = buildSSHSpawner(agent);
+
+  return options;
+}
+
+// ── SDK-based streaming chat via SSH ────────────────────────────────────
+
+async function streamClaudeCodeSDKviaSSH(event, requestId, agent, prompt) {
+  const sdk = await getClaudeSDK();
+  if (!sdk) return false; // SDK not available, fall back to CLI
+
+  const options = buildSDKOptionsForSSH(agent);
+  const abortController = new AbortController();
+  options.abortController = abortController;
+
+  // Permission handler — sends IPC to frontend, waits for response
+  if (options.permissionMode !== 'bypassPermissions') {
+    options.canUseTool = async (toolName, toolInput, permOpts) => {
+      const approvalId = permOpts.toolUseID || `${requestId}-${Date.now()}`;
+
+      event.sender.send('agent:permission-request', requestId, {
+        toolUseId: approvalId,
+        tool: toolName,
+        input: toolInput,
+        title: permOpts.title,
+        description: permOpts.description,
+        displayName: permOpts.displayName,
+        timestamp: Date.now(),
+      });
+
+      return waitForToolApproval(approvalId);
+    };
+  }
+
+  // Track the session
+  const session = {
+    status: 'running',
+    startTime: Date.now(),
+    abort: () => abortController.abort(),
+    resolveToolApproval,
+  };
+  activeSDKSessions.set(requestId, session);
+  activeClaudeProcs.set(requestId, {
+    abort: () => abortController.abort(),
+    sdkSession: true,
+    resolveToolApproval,
+  });
+
+  let sessionId = null;
+  const seenBlocks = new Set();
+
+  try {
+    const queryInstance = sdk.query({ prompt, options });
+
+    for await (const message of queryInstance) {
+      if (!message || !message.type) continue;
+
+      if (message.type === 'system' && message.subtype === 'init') {
+        sessionId = message.session_id;
+        continue;
+      }
+
+      if (message.type === 'stream_event' && message.event) {
+        const evt = message.event;
+        if (evt.type === 'content_block_delta') {
+          if (evt.delta?.type === 'text_delta' && evt.delta.text) {
+            event.sender.send('agent:stream-chunk', requestId, evt.delta.text);
+          }
+          if (evt.delta?.type === 'thinking_delta' && evt.delta.thinking) {
+            event.sender.send('agent:stream-thinking', requestId, evt.delta.thinking);
+          }
+        }
+        if (evt.type === 'content_block_start' && evt.index != null) {
+          seenBlocks.add(evt.index);
+        }
+        continue;
+      }
+
+      if (message.type === 'assistant' && message.message?.content) {
+        for (let i = 0; i < message.message.content.length; i++) {
+          const block = message.message.content[i];
+          if (block.type === 'tool_use') {
+            event.sender.send('agent:stream-tool-use', requestId, {
+              id: block.id,
+              tool: block.name,
+              input: block.input,
+            });
+          }
+          if (!seenBlocks.has(i)) {
+            if (block.type === 'text' && block.text) {
+              event.sender.send('agent:stream-chunk', requestId, block.text);
+            }
+            if (block.type === 'thinking' && block.thinking) {
+              event.sender.send('agent:stream-thinking', requestId, block.thinking);
+            }
+          }
+        }
+        seenBlocks.clear();
+        continue;
+      }
+
+      if (message.type === 'result') {
+        sessionId = message.session_id || sessionId;
+        continue;
+      }
+    }
+
+    session.status = 'completed';
+    session.completedAt = Date.now();
+    event.sender.send('agent:stream-done', requestId, { sessionId });
+    return true;
+  } catch (err) {
+    session.status = 'completed';
+    session.completedAt = Date.now();
+    const msg = err.message || '';
+    if (err.name === 'AbortError' || msg.includes('aborted')) {
+      event.sender.send('agent:stream-done', requestId, { sessionId });
+    } else if (msg.includes('401') || msg.includes('authentication') || msg.includes('not authenticated')) {
+      event.sender.send('agent:stream-error', requestId, 'Claude Code on remote is not authenticated. SSH into the machine and run: claude auth login');
+    } else {
+      event.sender.send('agent:stream-error', requestId, msg);
+    }
+    return true;
+  } finally {
+    activeClaudeProcs.delete(requestId);
+  }
+}
+
+// ── SDK-based non-streaming chat via SSH ─────────────────────────────────
+
+async function chatClaudeCodeSDKviaSSH(agent, prompt) {
+  const sdk = await getClaudeSDK();
+  if (!sdk) return null; // SDK not available, fall back to CLI
+
+  const options = buildSDKOptionsForSSH(agent);
+  const abortController = new AbortController();
+  options.abortController = abortController;
+
+  // For non-streaming, auto-allow tools (no UI to approve)
+  if (options.permissionMode !== 'bypassPermissions') {
+    options.permissionMode = 'acceptEdits';
+  }
+
+  let sessionId = null;
+  let resultText = '';
+
+  try {
+    const queryInstance = sdk.query({ prompt, options });
+
+    for await (const message of queryInstance) {
+      if (!message || !message.type) continue;
+
+      if (message.type === 'system' && message.subtype === 'init') {
+        sessionId = message.session_id;
+        continue;
+      }
+
+      if (message.type === 'assistant' && message.message?.content) {
+        for (const block of message.message.content) {
+          if (block.type === 'text' && block.text) {
+            resultText += block.text;
+          }
+        }
+        continue;
+      }
+
+      if (message.type === 'result') {
+        sessionId = message.session_id || sessionId;
+        if (message.result) resultText = message.result;
+        continue;
+      }
+    }
+
+    return { content: resultText, sessionId };
+  } catch (err) {
+    const msg = err.message || '';
+    if (msg.includes('401') || msg.includes('authentication') || msg.includes('not authenticated')) {
+      return { error: 'Claude Code on remote is not authenticated. SSH into the machine and run: claude auth login' };
+    }
+    return { error: msg };
+  }
+}
+
 // ── Build SDK options from agent config ──────────────────────────────────
 
 function buildSDKOptions(agent) {
@@ -88,6 +315,20 @@ function buildSDKOptions(agent) {
   } else if (agent.continueSession) {
     options.continue = true;
   }
+
+  // Custom spawner to ensure the login shell PATH is used
+  // (Electron launched from Finder/Dock won't have ~/.local/bin in PATH)
+  const loginEnv = getLoginEnv();
+  const claudePath = agent.claudePath || 'claude';
+  options.spawnClaudeCodeProcess = (spawnOpts) => {
+    const command = spawnOpts.command || claudePath;
+    const args = spawnOpts.args || [];
+    const proc = spawn(command, args, {
+      cwd: options.cwd,
+      env: { ...loginEnv, ...(spawnOpts.env || {}) },
+    });
+    return proc;
+  };
 
   return options;
 }
@@ -609,7 +850,16 @@ async function chatClaudeCodeSSH(agent, messages) {
   const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
   if (!lastUserMsg) return { error: 'No user message found' };
 
-  const escapedMsg = lastUserMsg.content
+  const prompt = lastUserMsg.content || '';
+
+  // Try SDK first (with SSH spawner)
+  if (agent.useSDK !== false) {
+    const sdkResult = await chatClaudeCodeSDKviaSSH(agent, prompt);
+    if (sdkResult) return sdkResult;
+  }
+
+  // Fall back to CLI-over-SSH
+  const escapedMsg = prompt
     .replace(/\\/g, '\\\\')
     .replace(/"/g, '\\"')
     .replace(/\$/g, '\\$')
@@ -678,7 +928,21 @@ async function streamClaudeCodeSSH(event, requestId, agent, messages) {
     return;
   }
 
-  const escapedMsg = lastUserMsg.content
+  const prompt = lastUserMsg.content || '';
+
+  // Try SDK first (with SSH spawner)
+  if (agent.useSDK !== false) {
+    try {
+      const used = await streamClaudeCodeSDKviaSSH(event, requestId, agent, prompt);
+      if (used) return;
+    } catch (err) {
+      // SDK failed — fall through to CLI-over-SSH
+      activeClaudeProcs.delete(requestId);
+    }
+  }
+
+  // Fall back to CLI-over-SSH
+  const escapedMsg = prompt
     .replace(/\\/g, '\\\\')
     .replace(/"/g, '\\"')
     .replace(/\$/g, '\\$')
@@ -861,7 +1125,9 @@ async function streamClaudeCodeSSH(event, requestId, agent, messages) {
 async function pingClaudeCodeSSH(agent) {
   try {
     const output = await runSSHCommand(agent, 'claude --version 2>&1', 15000);
-    return { online: true, info: output.trim() };
+    const sdk = await getClaudeSDK();
+    const sdkInfo = sdk ? ' (SDK via SSH)' : ' (CLI via SSH)';
+    return { online: true, info: output.trim() + sdkInfo };
   } catch (err) {
     return { online: false, error: err.message };
   }
