@@ -82,27 +82,6 @@ When you launch Agent Hub, you can add agents by clicking the "+" button and con
 #### OpenClaw
 - Requires OpenClaw CLI (`openclaw`)
 
-## 🎮 Usage
-
-### Basic Chat
-1. Select an agent from the sidebar
-2. Type your message in the input field
-3. Press Enter or click Send
-
-### Slash Commands
-Type `/` in the message input to see available commands:
-- `/clear` - Clear conversation history
-- `/reset` - Reset agent session
-- `/export` - Export conversation
-- `/settings` - Open agent settings
-
-### Keyboard Shortcuts
-- `Cmd+N` - New conversation
-- `Cmd+,` - Open settings
-- `Cmd+K` - Quick agent switcher
-- `Cmd+/` - Toggle sidebar
-- `Cmd+Shift+D` - Toggle dark mode
-
 ## 🏗️ Architecture
 
 ```
