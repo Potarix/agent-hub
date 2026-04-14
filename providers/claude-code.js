@@ -65,8 +65,12 @@ function buildSSHSpawner(agent) {
   const sshKey = agent.sshKey || '';
 
   return (options) => {
-    // Build the remote command from what the SDK wants to run
-    const remoteCmd = [options.command, ...options.args]
+    // The SDK passes the local node binary + local cli.js path as command/args,
+    // which don't exist on the remote. Replace with the remote `claude` binary
+    // and only keep the CLI flags (skip the local script path).
+    const claudePath = agent.claudePath || 'claude';
+    const cliFlags = (options.args || []).filter(a => !a.endsWith('.js') && !a.endsWith('.mjs'));
+    const remoteCmd = [claudePath, ...cliFlags]
       .map(a => `'${a.replace(/'/g, "'\\''")}'`)
       .join(' ');
     const workDir = agent.workDir || '~';
@@ -311,6 +315,20 @@ function buildSDKOptions(agent) {
   } else if (agent.continueSession) {
     options.continue = true;
   }
+
+  // Custom spawner to ensure the login shell PATH is used
+  // (Electron launched from Finder/Dock won't have ~/.local/bin in PATH)
+  const loginEnv = getLoginEnv();
+  const claudePath = agent.claudePath || 'claude';
+  options.spawnClaudeCodeProcess = (spawnOpts) => {
+    const command = spawnOpts.command || claudePath;
+    const args = spawnOpts.args || [];
+    const proc = spawn(command, args, {
+      cwd: options.cwd,
+      env: { ...loginEnv, ...(spawnOpts.env || {}) },
+    });
+    return proc;
+  };
 
   return options;
 }
