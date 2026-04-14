@@ -81,34 +81,9 @@ When you launch Agent Hub, you can add agents by clicking the "+" button and con
   - `acceptEdits`: Auto-approve safe edits
   - `bypassPermissions`: Skip all checks (use cautiously)
 
-```javascript
-{
-  name: "My Claude Agent",
-  provider: "claude-code",
-  permissionMode: "ask",
-  model: "claude-3-5-sonnet-20241022",
-  workDir: "/path/to/project"
-}
-```
-
-#### OpenAI
-- Requires API key from OpenAI
-- Supports GPT-4, GPT-3.5 models
-- Configure base URL for API compatibility
-
-```javascript
-{
-  name: "GPT-4 Agent",
-  provider: "openai",
-  apiKey: "sk-...",
-  model: "gpt-4",
-  baseUrl: "https://api.openai.com"
-}
-```
-
 #### Codex
 - **Local Mode**: Uses OpenAI Codex SDK
-- **SSH Mode**: Remote Codex access
+- **SSH Mode**: Requires SSH access to remote machine with Codex CLI
 - Specialized for code generation tasks
 
 ```javascript
