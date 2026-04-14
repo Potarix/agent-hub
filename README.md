@@ -1,6 +1,6 @@
 # Agent Hub
 
-A unified desktop dashboard for managing and interacting with all your AI agents in one place. Built with Electron, Agent Hub provides a beautiful native interface for Claude Code, OpenAI, Codex, Hermes, OpenClaw, and other AI providers.
+Imessage for your AI Agents. Chat with your hermes, Openclaw, Codex, and claude code instances locally and across different VPS's.
 
 ![Agent Hub](https://img.shields.io/badge/version-1.0.0-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)
