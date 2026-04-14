@@ -28,6 +28,7 @@ Before running Agent Hub, ensure you have the following installed:
 ### Optional (depending on which providers you want to use)
 - **Claude CLI**: For Claude Code provider (`npm install -g @anthropic-ai/claude-code`)
 - **OpenClaw CLI**: For OpenClaw provider (`npm install -g openclaw`)
+- **Codex CLI**: For Codex provider (`npm i -g @openai/codex`)
 - **Hermes CLI**: For Hermes provider (installation varies)
 - **SSH Access**: For remote provider connections
 
@@ -82,43 +83,14 @@ When you launch Agent Hub, you can add agents by clicking the "+" button and con
 #### Codex
 - **Local Mode**: Uses OpenAI Codex SDK
 - **SSH Mode**: Requires SSH access to remote machine with Codex CLI
-- Specialized for code generation tasks
 
-```javascript
-{
-  name: "Codex Agent",
-  provider: "codex",
-  model: "codex-cushman",
-  workDir: "/path/to/project"
-}
-```
 
 #### Hermes
 - **Local Mode**: Requires local Hermes installation
 - **Remote Mode**: Connect to Hermes server
-- Optimized for conversation and reasoning
-
-```javascript
-{
-  name: "Hermes Agent",
-  provider: "hermes-local",
-  host: "localhost",
-  port: 8080
-}
-```
 
 #### OpenClaw
 - Requires OpenClaw CLI (`openclaw`)
-- Supports local and remote configurations
-- Built for tool-use and automation
-
-```javascript
-{
-  name: "OpenClaw Agent",
-  provider: "openclaw-local",
-  sessionId: "auto-generated"
-}
-```
 
 ### Environment Variables
 
