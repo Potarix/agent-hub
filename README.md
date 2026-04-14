@@ -1,6 +1,6 @@
 # Agent Hub
 
-A unified desktop dashboard for managing and interacting with all your AI agents in one place. Built with Electron, Agent Hub provides a beautiful native interface for Claude Code, OpenAI, Codex, Hermes, OpenClaw, and other AI providers.
+Imessage for your AI Agents. Chat with your hermes, Openclaw, Codex, and claude code instances locally and across different VPS's.
 
 ![Agent Hub](https://img.shields.io/badge/version-1.0.0-blue)
 ![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)
@@ -8,15 +8,13 @@ A unified desktop dashboard for managing and interacting with all your AI agents
 
 ## 🎯 Features
 
-- **Multi-Provider Support**: Connect to 10+ AI providers including Claude Code, OpenAI, Codex, Hermes, and OpenClaw
+- **Multi-Provider Support**: Connect to AI providers including Claude Code, OpenAI, Codex, Hermes, and OpenClaw
 - **Unified Interface**: Single dashboard to manage all your AI conversations
 - **Streaming Responses**: Real-time streaming for supported providers
 - **Permission Management**: Advanced permission approval system for Claude Code operations
 - **SSH Remote Support**: Connect to remote AI agents via SSH
-- **Dark/Light Mode**: Automatic theme switching based on system preferences
 - **Slash Commands**: Built-in commands for common operations
 - **Session Management**: Maintain conversation context across sessions
-- **Native Performance**: Built with Electron for optimal desktop experience
 
 ## 📋 Prerequisites
 
@@ -30,6 +28,7 @@ Before running Agent Hub, ensure you have the following installed:
 ### Optional (depending on which providers you want to use)
 - **Claude CLI**: For Claude Code provider (`npm install -g @anthropic-ai/claude-code`)
 - **OpenClaw CLI**: For OpenClaw provider (`npm install -g openclaw`)
+- **Codex CLI**: For Codex provider (`npm i -g @openai/codex`)
 - **Hermes CLI**: For Hermes provider (installation varies)
 - **SSH Access**: For remote provider connections
 
@@ -81,86 +80,17 @@ When you launch Agent Hub, you can add agents by clicking the "+" button and con
   - `acceptEdits`: Auto-approve safe edits
   - `bypassPermissions`: Skip all checks (use cautiously)
 
-```javascript
-{
-  name: "My Claude Agent",
-  provider: "claude-code",
-  permissionMode: "ask",
-  model: "claude-3-5-sonnet-20241022",
-  workDir: "/path/to/project"
-}
-```
-
-#### OpenAI
-- Requires API key from OpenAI
-- Supports GPT-4, GPT-3.5 models
-- Configure base URL for API compatibility
-
-```javascript
-{
-  name: "GPT-4 Agent",
-  provider: "openai",
-  apiKey: "sk-...",
-  model: "gpt-4",
-  baseUrl: "https://api.openai.com"
-}
-```
-
 #### Codex
 - **Local Mode**: Uses OpenAI Codex SDK
-- **SSH Mode**: Remote Codex access
-- Specialized for code generation tasks
+- **SSH Mode**: Requires SSH access to remote machine with Codex CLI
 
-```javascript
-{
-  name: "Codex Agent",
-  provider: "codex",
-  model: "codex-cushman",
-  workDir: "/path/to/project"
-}
-```
 
 #### Hermes
 - **Local Mode**: Requires local Hermes installation
 - **Remote Mode**: Connect to Hermes server
-- Optimized for conversation and reasoning
-
-```javascript
-{
-  name: "Hermes Agent",
-  provider: "hermes-local",
-  host: "localhost",
-  port: 8080
-}
-```
 
 #### OpenClaw
 - Requires OpenClaw CLI (`openclaw`)
-- Supports local and remote configurations
-- Built for tool-use and automation
-
-```javascript
-{
-  name: "OpenClaw Agent",
-  provider: "openclaw-local",
-  sessionId: "auto-generated"
-}
-```
-
-### Environment Variables
-
-You can set these optional environment variables:
-
-```bash
-# For OpenAI-compatible providers
-export OPENAI_API_KEY="your-api-key"
-
-# For custom base URLs
-export OPENAI_BASE_URL="https://your-api-endpoint.com"
-
-# For SSH connections
-export SSH_KEY_PATH="~/.ssh/id_rsa"
-```
 
 ## 🎮 Usage
 
@@ -168,14 +98,6 @@ export SSH_KEY_PATH="~/.ssh/id_rsa"
 1. Select an agent from the sidebar
 2. Type your message in the input field
 3. Press Enter or click Send
-4. View streaming responses in real-time
-
-### Permission Approval (Claude Code)
-When using Claude Code with permission mode enabled:
-1. The agent will request permission for operations
-2. Review the tool and parameters in the modal
-3. Click "Approve" or "Deny" with optional reason
-4. The operation proceeds based on your decision
 
 ### Slash Commands
 Type `/` in the message input to see available commands:
@@ -240,49 +162,6 @@ This enables developer tools and hot reload.
 3. Register in `main.js` IPC handlers
 4. Add UI support in `index.html`
 
-## 🐛 Troubleshooting
-
-### Application Won't Start
-- Check Node.js version: `node --version` (should be v18+)
-- Reinstall dependencies: `rm -rf node_modules && npm install`
-- Check for port conflicts if using local providers
-
-### Provider Not Working
-
-Agent Hub does not install or manage AI agents for you — each provider must already be installed and running on your system before you can use it in Agent Hub.
-
-**Claude Code**: Requires the `claude` CLI to be installed and authenticated.
-```bash
-# Verify it's available
-which claude
-```
-
-**OpenClaw**: Requires the `openclaw` CLI to be installed and available in your PATH.
-```bash
-# Verify it's available
-which openclaw
-```
-
-**Hermes**: Requires a running Hermes service.
-```bash
-# Verify the service is running
-hermes --version
-```
-
-### Permission Requests Not Appearing
-- Ensure streaming mode is enabled
-- Check `permissionMode` is not set to `bypassPermissions`
-- View console logs: `Cmd+Option+I` in developer mode
-
-### SSH Connection Failed
-- Verify SSH key permissions: `chmod 600 ~/.ssh/id_rsa`
-- Test connection: `ssh user@host`
-- Check firewall settings
-
-### Dark Mode Not Working
-- Check system preferences for appearance settings
-- Manually toggle: `Cmd+Shift+D`
-
 ## 📝 License
 
 MIT License - see LICENSE file for details
@@ -305,14 +184,6 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## 👥 Author
 
 **Omar Dadabhoy**
-
-## 🙏 Acknowledgments
-
-- Built on [Electron](https://www.electronjs.org/)
-- UI powered by [React](https://reactjs.org/)
-- Claude Code SDK by [Anthropic](https://www.anthropic.com/)
-- OpenAI SDK for GPT models
-- All the amazing AI provider teams
 
 ---
 
