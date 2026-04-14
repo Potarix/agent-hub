@@ -603,13 +603,9 @@ async function chatClaudeCode(agent, messages) {
     proc.stdout.on('data', d => { stdout += d.toString(); });
     proc.stderr.on('data', d => { stderr += d.toString(); });
 
-    const timer = setTimeout(() => {
-      proc.kill();
-      resolve({ error: 'Claude Code timed out' });
-    }, 600000);
+    // No timeout — wait for agent to finish
 
     proc.on('close', (code) => {
-      clearTimeout(timer);
       try {
         const data = JSON.parse(stdout);
         resolve({
@@ -631,7 +627,6 @@ async function chatClaudeCode(agent, messages) {
     });
 
     proc.on('error', (err) => {
-      clearTimeout(timer);
       resolve({ error: err.message });
     });
   });
@@ -777,30 +772,12 @@ async function streamClaudeCode(event, requestId, agent, messages) {
     stderrOutput += text;
   });
 
-  // Activity-based timeout (10 min, resets on any output)
-  let timer = setTimeout(() => {
-    if (settled) return;
-    settled = true;
-    proc.kill();
-    event.sender.send('agent:stream-error', requestId, 'Claude Code timed out');
-  }, 600000);
-  const resetTimer = () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      proc.kill();
-      event.sender.send('agent:stream-error', requestId, 'Claude Code timed out');
-    }, 600000);
-  };
-  proc.stdout.on('data', resetTimer);
-  proc.stderr.on('data', resetTimer);
+  // No timeout — wait for agent to finish
 
   return new Promise((resolve) => {
     proc.on('close', (code) => {
       if (settled) return resolve();
       settled = true;
-      clearTimeout(timer);
       activeClaudeProcs.delete(requestId);
 
       if (code !== 0 && stderrOutput.trim()) {
@@ -819,7 +796,6 @@ async function streamClaudeCode(event, requestId, agent, messages) {
     proc.on('error', (err) => {
       if (settled) return resolve();
       settled = true;
-      clearTimeout(timer);
       activeClaudeProcs.delete(requestId);
       event.sender.send('agent:stream-error', requestId, err.message);
       resolve();
@@ -1074,29 +1050,12 @@ async function streamClaudeCodeSSH(event, requestId, agent, messages) {
     }
   });
 
-  let timer = setTimeout(() => {
-    if (settled) return;
-    settled = true;
-    proc.kill();
-    event.sender.send('agent:stream-error', requestId, 'SSH command timeout');
-  }, 600000);
-  const resetTimer = () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      proc.kill();
-      event.sender.send('agent:stream-error', requestId, 'SSH command timeout');
-    }, 600000);
-  };
-  proc.stdout.on('data', resetTimer);
-  proc.stderr.on('data', resetTimer);
+  // No timeout — wait for agent to finish
 
   return new Promise((resolve) => {
     proc.on('close', (code) => {
       if (settled) return resolve();
       settled = true;
-      clearTimeout(timer);
       if (code !== 0 && stderrOutput.trim()) {
         const errMsg = stderrOutput.trim();
         if (errMsg.includes('401') || errMsg.includes('authentication') || errMsg.includes('not authenticated')) {
@@ -1113,7 +1072,6 @@ async function streamClaudeCodeSSH(event, requestId, agent, messages) {
     proc.on('error', (err) => {
       if (settled) return resolve();
       settled = true;
-      clearTimeout(timer);
       event.sender.send('agent:stream-error', requestId, err.message);
       resolve();
     });

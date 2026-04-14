@@ -6,8 +6,9 @@ const { runLocalCommand } = require('../lib/local');
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const DEFAULT_GATEWAY_PORT = 18789;
-const CHAT_TIMEOUT = 300000;   // 5 min — agent turns can be slow
-const PING_TIMEOUT = 15000;    // 15s for health checks
+const CHAT_TIMEOUT = 0;              // no timeout — streaming waits for agent to finish
+const CHAT_TIMEOUT_NONSTREAM = 24 * 60 * 60 * 1000; // 24h fallback for non-streaming calls
+const PING_TIMEOUT = 15000;          // 15s for health checks
 
 // Regex to detect tool start events from verbose output.
 // Example: [agent] embedded run tool start: runId=abc tool=web_search toolCallId=call_xyz
@@ -259,17 +260,10 @@ function streamFromProcess(proc, event, requestId, sessionId, timeout) {
       }
     });
 
-    let timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      proc.kill();
-      event.sender.send('agent:stream-error', requestId, 'Command timeout');
-      resolve();
-    }, timeout);
+    // When timeout is 0/falsy, no timer — wait indefinitely for agent to finish.
+    let timer = null;
 
-    // Reset timeout on any stdout data — agent can pause while thinking
-    proc.stdout.on('data', () => {
-      clearTimeout(timer);
+    if (timeout) {
       timer = setTimeout(() => {
         if (settled) return;
         settled = true;
@@ -277,12 +271,23 @@ function streamFromProcess(proc, event, requestId, sessionId, timeout) {
         event.sender.send('agent:stream-error', requestId, 'Command timeout');
         resolve();
       }, timeout);
-    });
+
+      proc.stdout.on('data', () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          proc.kill();
+          event.sender.send('agent:stream-error', requestId, 'Command timeout');
+          resolve();
+        }, timeout);
+      });
+    }
 
     proc.on('close', (code) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
 
       // Flush any remaining buffer
       if (lineBuffer.trim() && !isNonContentLine(lineBuffer)) {
@@ -302,7 +307,7 @@ function streamFromProcess(proc, event, requestId, sessionId, timeout) {
     proc.on('error', (err) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       event.sender.send('agent:stream-error', requestId, err.message);
       resolve();
     });
@@ -326,7 +331,7 @@ async function remoteChatCli(agent, message, sessionId) {
   const cmd = buildSSHCmd(agentId, message, { json: true, sessionId });
 
   try {
-    const output = await runSSHCommand(agent, cmd, CHAT_TIMEOUT);
+    const output = await runSSHCommand(agent, cmd, CHAT_TIMEOUT_NONSTREAM);
     return parseJsonOutput(output);
   } catch (err) {
     // runSSHCommand sometimes throws with useful output in the error
@@ -378,7 +383,7 @@ async function localChatCli(agent, message, sessionId) {
   const cmd = buildLocalCmd(agentId, message, { json: true, sessionId });
 
   try {
-    const output = await runLocalCommand('bash', ['-l', '-c', cmd], { cwd: workDir, timeout: CHAT_TIMEOUT });
+    const output = await runLocalCommand('bash', ['-l', '-c', cmd], { cwd: workDir, timeout: CHAT_TIMEOUT_NONSTREAM });
     return parseJsonOutput(output);
   } catch (err) {
     const parsed = parseJsonOutput(err.message || '');
@@ -397,7 +402,7 @@ async function localChatHttp(agent, messages, sessionId) {
     user: sessionId || undefined,
   });
 
-  const res = await makeRequest(url, { method: 'POST', headers, timeout: CHAT_TIMEOUT }, body);
+  const res = await makeRequest(url, { method: 'POST', headers, timeout: CHAT_TIMEOUT_NONSTREAM }, body);
   const data = JSON.parse(res.body);
 
   if (res.status !== 200) throw new Error(data.error?.message || `Gateway error (${res.status})`);

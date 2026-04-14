@@ -96,7 +96,7 @@ async function chatOpenClawLocal(agent, messages) {
   let cmd = `openclaw agent --agent '${agentId}' --message '${escapedMsg}' --json 2>&1`;
 
   try {
-    const output = await runLocalCommand('bash', ['-l', '-c', cmd], { cwd: workDir, timeout: 300000 });
+    const output = await runLocalCommand('bash', ['-l', '-c', cmd], { cwd: workDir, timeout: 24 * 60 * 60 * 1000 });
     const content = extractOpenClawResponse(output);
     return { content };
   } catch (err) {

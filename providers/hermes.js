@@ -6,8 +6,9 @@ const { activeClaudeProcs } = require('../lib/state');
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
-const CHAT_TIMEOUT = 300000;   // 5 min — agent turns can be slow
-const PING_TIMEOUT = 15000;    // 15s for health checks
+const CHAT_TIMEOUT = 0;              // no timeout — streaming waits for agent to finish
+const CHAT_TIMEOUT_NONSTREAM = 24 * 60 * 60 * 1000; // 24h fallback for non-streaming calls
+const PING_TIMEOUT = 15000;          // 15s for health checks
 
 // ── Noise filtering ───────────────────────────────────────────────────────
 // Hermes outputs log lines, spinners, and status messages before the actual
@@ -130,16 +131,10 @@ function streamFromProcess(proc, event, requestId, timeout) {
     });
 
     // Activity-based timeout — resets on any stdout/stderr data
-    let timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      proc.kill();
-      event.sender.send('agent:stream-error', requestId, 'Hermes command timeout');
-      resolve();
-    }, timeout);
+    // When timeout is 0/falsy, no timer is set — we wait indefinitely for the agent to finish.
+    let timer = null;
 
-    const resetTimer = () => {
-      clearTimeout(timer);
+    if (timeout) {
       timer = setTimeout(() => {
         if (settled) return;
         settled = true;
@@ -147,14 +142,25 @@ function streamFromProcess(proc, event, requestId, timeout) {
         event.sender.send('agent:stream-error', requestId, 'Hermes command timeout');
         resolve();
       }, timeout);
-    };
-    proc.stdout.on('data', resetTimer);
-    proc.stderr.on('data', resetTimer);
+
+      const resetTimer = () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          proc.kill();
+          event.sender.send('agent:stream-error', requestId, 'Hermes command timeout');
+          resolve();
+        }, timeout);
+      };
+      proc.stdout.on('data', resetTimer);
+      proc.stderr.on('data', resetTimer);
+    }
 
     proc.on('close', (code) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
 
       // Flush any remaining buffered content
       if (lineBuffer.trim()) {
@@ -180,7 +186,7 @@ function streamFromProcess(proc, event, requestId, timeout) {
     proc.on('error', (err) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       event.sender.send('agent:stream-error', requestId, err.message);
       resolve();
     });
@@ -224,7 +230,7 @@ async function chatHermesLocal(agent, messages) {
   try {
     const output = await runLocalCommand('bash', ['-l', '-c', cmd], {
       cwd: workDir,
-      timeout: CHAT_TIMEOUT,
+      timeout: CHAT_TIMEOUT_NONSTREAM,
     });
     return { content: extractHermesResponse(output) };
   } catch (err) {
@@ -293,7 +299,7 @@ async function chatHermes(agent, messages) {
   cmd += ` -q '${escapedMsg}' 2>&1`;
 
   try {
-    const output = await runSSHCommand(agent, cmd, CHAT_TIMEOUT, { singleQuoteWrap: true });
+    const output = await runSSHCommand(agent, cmd, CHAT_TIMEOUT_NONSTREAM, { singleQuoteWrap: true });
     return { content: extractHermesResponse(output) };
   } catch (err) {
     const errMsg = err.message || '';
