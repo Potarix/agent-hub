@@ -162,49 +162,6 @@ This enables developer tools and hot reload.
 3. Register in `main.js` IPC handlers
 4. Add UI support in `index.html`
 
-## 🐛 Troubleshooting
-
-### Application Won't Start
-- Check Node.js version: `node --version` (should be v18+)
-- Reinstall dependencies: `rm -rf node_modules && npm install`
-- Check for port conflicts if using local providers
-
-### Provider Not Working
-
-Agent Hub does not install or manage AI agents for you — each provider must already be installed and running on your system before you can use it in Agent Hub.
-
-**Claude Code**: Requires the `claude` CLI to be installed and authenticated.
-```bash
-# Verify it's available
-which claude
-```
-
-**OpenClaw**: Requires the `openclaw` CLI to be installed and available in your PATH.
-```bash
-# Verify it's available
-which openclaw
-```
-
-**Hermes**: Requires a running Hermes service.
-```bash
-# Verify the service is running
-hermes --version
-```
-
-### Permission Requests Not Appearing
-- Ensure streaming mode is enabled
-- Check `permissionMode` is not set to `bypassPermissions`
-- View console logs: `Cmd+Option+I` in developer mode
-
-### SSH Connection Failed
-- Verify SSH key permissions: `chmod 600 ~/.ssh/id_rsa`
-- Test connection: `ssh user@host`
-- Check firewall settings
-
-### Dark Mode Not Working
-- Check system preferences for appearance settings
-- Manually toggle: `Cmd+Shift+D`
-
 ## 📝 License
 
 MIT License - see LICENSE file for details
@@ -227,14 +184,6 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## 👥 Author
 
 **Omar Dadabhoy**
-
-## 🙏 Acknowledgments
-
-- Built on [Electron](https://www.electronjs.org/)
-- UI powered by [React](https://reactjs.org/)
-- Claude Code SDK by [Anthropic](https://www.anthropic.com/)
-- OpenAI SDK for GPT models
-- All the amazing AI provider teams
 
 ---
 
