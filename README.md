@@ -92,21 +92,6 @@ When you launch Agent Hub, you can add agents by clicking the "+" button and con
 #### OpenClaw
 - Requires OpenClaw CLI (`openclaw`)
 
-### Environment Variables
-
-You can set these optional environment variables:
-
-```bash
-# For OpenAI-compatible providers
-export OPENAI_API_KEY="your-api-key"
-
-# For custom base URLs
-export OPENAI_BASE_URL="https://your-api-endpoint.com"
-
-# For SSH connections
-export SSH_KEY_PATH="~/.ssh/id_rsa"
-```
-
 ## 🎮 Usage
 
 ### Basic Chat
