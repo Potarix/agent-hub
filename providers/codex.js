@@ -99,7 +99,6 @@ function buildCodexExecArgs(agent, { stdinPrompt = false, json = false } = {}) {
   const args = ['exec', '--full-auto', '--color', 'never'];
   if (json) args.push('--json');
   if (agent.skipGitRepoCheck !== false) args.push('--skip-git-repo-check');
-  if (agent.model) args.push('--model', agent.model);
   if (agent.codexArgs) args.push(...agent.codexArgs.split(/\s+/).filter(Boolean));
   if (stdinPrompt) args.push('-');
   return args;
@@ -109,7 +108,6 @@ function buildCodexExecShellCommand(agent, { stdinPrompt = false, json = false }
   const parts = ['codex', 'exec', '--full-auto', '--color', 'never'];
   if (json) parts.push('--json');
   if (agent.skipGitRepoCheck !== false) parts.push('--skip-git-repo-check');
-  if (agent.model) parts.push('--model', shellQuote(agent.model));
   if (agent.codexArgs) parts.push(agent.codexArgs);
   if (stdinPrompt) parts.push('-');
   return parts.join(' ');
@@ -144,7 +142,6 @@ function buildCodexThreadOptions(agent) {
     webSearchEnabled: !!agent.webSearchEnabled,
   };
 
-  if (agent.model) options.model = agent.model;
   if (agent.reasoningEffort) options.modelReasoningEffort = agent.reasoningEffort;
   if (typeof agent.networkAccessEnabled === 'boolean') options.networkAccessEnabled = agent.networkAccessEnabled;
   if (Array.isArray(agent.additionalDirectories)) options.additionalDirectories = agent.additionalDirectories.map(expandHomeDir);
@@ -328,7 +325,7 @@ async function streamCodexWithAgentsSDK(event, requestId, agent, userMsg, prompt
 
   const codexAgent = new Agent({
     name: agent.name || 'Codex',
-    model: agent.agentModel || agent.model || 'gpt-5.4',
+    model: agent.agentModel || 'gpt-5.4',
     instructions: [
       agent.systemPrompt || '',
       'For every user request, call the codex tool exactly once with one text input containing the request. Do not answer directly unless the tool is unavailable.',
@@ -560,7 +557,7 @@ async function streamCodexLocal(event, requestId, agent, messages) {
       }));
 
       const stream = await openai.chat.completions.create({
-        model: agent.model || 'gpt-4o',
+        model: 'gpt-4o',
         messages: formattedMessages,
         max_tokens: agent.maxTokens || 16384,
         temperature: agent.temperature ?? 0.7,
@@ -715,7 +712,7 @@ async function chatCodexLocal(agent, messages) {
       }));
 
       const completion = await openai.chat.completions.create({
-        model: agent.model || 'gpt-4o',
+        model: 'gpt-4o',
         messages: formattedMessages,
         max_tokens: agent.maxTokens || 16384,
         temperature: agent.temperature ?? 0.7,

@@ -2926,10 +2926,6 @@
                       <input value={form.workDir || ''} onChange={e => setForm(f => ({ ...f, workDir: e.target.value }))} placeholder="e.g. ~/projects/myapp (blank = home dir)" />
                     </div>
                     <div className="form-row">
-                      <label>Model (optional)</label>
-                      <input value={form.model || ''} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} placeholder="e.g. o3, o4-mini, gpt-4.1" />
-                    </div>
-                    <div className="form-row">
                       <label>Codex binary path (optional)</label>
                       <input value={form.codexPath || ''} onChange={e => setForm(f => ({ ...f, codexPath: e.target.value }))} placeholder="codex (default, uses PATH)" />
                     </div>
