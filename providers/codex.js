@@ -99,7 +99,6 @@ function buildCodexExecArgs(agent, { stdinPrompt = false, json = false } = {}) {
   const args = ['exec', '--full-auto', '--color', 'never'];
   if (json) args.push('--json');
   if (agent.skipGitRepoCheck !== false) args.push('--skip-git-repo-check');
-  if (agent.model) args.push('--model', agent.model);
   if (agent.codexArgs) args.push(...agent.codexArgs.split(/\s+/).filter(Boolean));
   if (stdinPrompt) args.push('-');
   return args;
@@ -109,7 +108,6 @@ function buildCodexExecShellCommand(agent, { stdinPrompt = false, json = false }
   const parts = ['codex', 'exec', '--full-auto', '--color', 'never'];
   if (json) parts.push('--json');
   if (agent.skipGitRepoCheck !== false) parts.push('--skip-git-repo-check');
-  if (agent.model) parts.push('--model', shellQuote(agent.model));
   if (agent.codexArgs) parts.push(agent.codexArgs);
   if (stdinPrompt) parts.push('-');
   return parts.join(' ');
@@ -144,7 +142,6 @@ function buildCodexThreadOptions(agent) {
     webSearchEnabled: !!agent.webSearchEnabled,
   };
 
-  if (agent.model) options.model = agent.model;
   if (agent.reasoningEffort) options.modelReasoningEffort = agent.reasoningEffort;
   if (typeof agent.networkAccessEnabled === 'boolean') options.networkAccessEnabled = agent.networkAccessEnabled;
   if (Array.isArray(agent.additionalDirectories)) options.additionalDirectories = agent.additionalDirectories.map(expandHomeDir);
@@ -246,9 +243,52 @@ function createCodexEventForwarder(event, requestId) {
   };
 }
 
+// ── Message history helpers ──
+
+/**
+ * Build a prompt string that includes the full conversation history.
+ * When there's no sessionId to resume a Codex thread, we embed prior
+ * messages so the model still has context over the entire thread.
+ */
+function buildPromptWithHistory(messages, lastUserMsg) {
+  if (!messages || messages.length <= 1) {
+    // Only one message — no history to prepend
+    return typeof lastUserMsg === 'string' ? lastUserMsg : lastUserMsg.content || '';
+  }
+
+  const currentContent = typeof lastUserMsg === 'string' ? lastUserMsg : lastUserMsg.content || '';
+
+  // Build conversation history from all messages except the last user message
+  const historyParts = [];
+  for (const msg of messages) {
+    if (msg === lastUserMsg) continue;
+    const role = msg.role === 'user' ? 'User' : msg.role === 'assistant' ? 'Assistant' : 'System';
+    if (msg.content && msg.content.trim()) {
+      historyParts.push(`${role}: ${msg.content.trim()}`);
+    }
+  }
+
+  if (historyParts.length === 0) return currentContent;
+
+  return `<conversation_history>\n${historyParts.join('\n\n')}\n</conversation_history>\n\nUser: ${currentContent}`;
+}
+
+/**
+ * Get the prompt to send to Codex, choosing between just the last message
+ * (when we can resume a thread via sessionId) or the full history.
+ */
+function getCodexPrompt(agent, messages, lastUserMsg) {
+  if (agent.sessionId) {
+    // Thread will be resumed — Codex SDK has the history internally
+    return typeof lastUserMsg === 'string' ? lastUserMsg : lastUserMsg.content || '';
+  }
+  // No session to resume — embed full history in the prompt
+  return buildPromptWithHistory(messages, lastUserMsg);
+}
+
 // ── SDK-based streaming/chat ──
 
-async function streamCodexWithAgentsSDK(event, requestId, agent, userMsg) {
+async function streamCodexWithAgentsSDK(event, requestId, agent, userMsg, prompt) {
   const apiKey = getCodexApiKey(agent);
   if (!apiKey) return false;
 
@@ -257,13 +297,8 @@ async function streamCodexWithAgentsSDK(event, requestId, agent, userMsg) {
 
   setDefaultOpenAIKey(apiKey);
 
-  // Build prompt with image support
-  let prompt = typeof userMsg === 'string' ? userMsg : userMsg.content || '';
-
-  // If there are images, create multi-part content
+  // If there are images, append a note
   if (typeof userMsg === 'object' && userMsg.images && userMsg.images.length > 0) {
-    // For OpenAI Agents SDK, we might need to pass images differently
-    // For now, we'll add a note about attached images
     prompt += '\n\n[User has attached images to this message]';
   }
 
@@ -290,7 +325,7 @@ async function streamCodexWithAgentsSDK(event, requestId, agent, userMsg) {
 
   const codexAgent = new Agent({
     name: agent.name || 'Codex',
-    model: agent.agentModel || agent.model || 'gpt-5.4',
+    model: agent.agentModel || 'gpt-5.4',
     instructions: [
       agent.systemPrompt || '',
       'For every user request, call the codex tool exactly once with one text input containing the request. Do not answer directly unless the tool is unavailable.',
@@ -334,17 +369,14 @@ async function streamCodexWithAgentsSDK(event, requestId, agent, userMsg) {
   }
 }
 
-async function streamCodexWithCodexSDK(event, requestId, agent, userMsg) {
+async function streamCodexWithCodexSDK(event, requestId, agent, userMsg, prompt) {
   const { Codex } = await getCodexSDK();
   const apiKey = getCodexApiKey(agent);
   const codex = new Codex(buildCodexSDKOptions(agent, apiKey));
   const threadOptions = buildCodexThreadOptions(agent);
   const thread = agent.sessionId ? codex.resumeThread(agent.sessionId, threadOptions) : codex.startThread(threadOptions);
 
-  // Build prompt with image support
-  let prompt = typeof userMsg === 'string' ? userMsg : userMsg.content || '';
-
-  // If there are images, add a note about them
+  // If there are images, append a note
   if (typeof userMsg === 'object' && userMsg.images && userMsg.images.length > 0) {
     prompt += '\n\n[User has attached images to this message]';
   }
@@ -370,17 +402,14 @@ async function streamCodexWithCodexSDK(event, requestId, agent, userMsg) {
   }
 }
 
-async function chatCodexWithCodexSDK(agent, userMsg) {
+async function chatCodexWithCodexSDK(agent, userMsg, prompt) {
   const { Codex } = await getCodexSDK();
   const apiKey = getCodexApiKey(agent);
   const codex = new Codex(buildCodexSDKOptions(agent, apiKey));
   const threadOptions = buildCodexThreadOptions(agent);
   const thread = agent.sessionId ? codex.resumeThread(agent.sessionId, threadOptions) : codex.startThread(threadOptions);
 
-  // Build prompt with image support
-  let prompt = typeof userMsg === 'string' ? userMsg : userMsg.content || '';
-
-  // If there are images, add a note about them
+  // If there are images, append a note
   if (typeof userMsg === 'object' && userMsg.images && userMsg.images.length > 0) {
     prompt += '\n\n[User has attached images to this message]';
   }
@@ -398,12 +427,16 @@ async function streamCodexLocal(event, requestId, agent, messages) {
     return;
   }
 
+  // Build prompt: includes full conversation history when no sessionId,
+  // or just the last message when resuming an existing Codex thread.
+  const prompt = getCodexPrompt(agent, messages, lastUserMsg);
+
   if (agent.useCodexSDK !== false) {
     try {
-      const usedAgentsSDK = await streamCodexWithAgentsSDK(event, requestId, agent, lastUserMsg);
+      const usedAgentsSDK = await streamCodexWithAgentsSDK(event, requestId, agent, lastUserMsg, prompt);
       if (usedAgentsSDK) return;
 
-      await streamCodexWithCodexSDK(event, requestId, agent, lastUserMsg);
+      await streamCodexWithCodexSDK(event, requestId, agent, lastUserMsg, prompt);
       return;
     } catch (err) {
       activeClaudeProcs.delete(requestId);
@@ -444,7 +477,7 @@ async function streamCodexLocal(event, requestId, agent, messages) {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
-      proc.stdin.write(lastUserMsg.content);
+      proc.stdin.write(prompt);
       proc.stdin.end();
 
       const forwarder = createCodexEventForwarder(event, requestId);
@@ -524,7 +557,7 @@ async function streamCodexLocal(event, requestId, agent, messages) {
       }));
 
       const stream = await openai.chat.completions.create({
-        model: agent.model || 'gpt-4o',
+        model: 'gpt-4o',
         messages: formattedMessages,
         max_tokens: agent.maxTokens || 16384,
         temperature: agent.temperature ?? 0.7,
@@ -590,9 +623,12 @@ async function chatCodexLocal(agent, messages) {
   const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
   if (!lastUserMsg) return { error: 'No user message found' };
 
+  // Build prompt: includes full conversation history when no sessionId
+  const prompt = getCodexPrompt(agent, messages, lastUserMsg);
+
   if (agent.useCodexSDK !== false) {
     try {
-      return await chatCodexWithCodexSDK(agent, lastUserMsg);
+      return await chatCodexWithCodexSDK(agent, lastUserMsg, prompt);
     } catch (err) {
       const msg = err.message || '';
       if (msg.includes('401') || msg.includes('authentication') || msg.includes('not authenticated')) {
@@ -635,7 +671,7 @@ async function chatCodexLocal(agent, messages) {
         let stdout = '';
         let stderr = '';
 
-        proc.stdin.write(lastUserMsg.content);
+        proc.stdin.write(prompt);
         proc.stdin.end();
 
         proc.stdout.on('data', (d) => { stdout += d.toString(); });
@@ -676,7 +712,7 @@ async function chatCodexLocal(agent, messages) {
       }));
 
       const completion = await openai.chat.completions.create({
-        model: agent.model || 'gpt-4o',
+        model: 'gpt-4o',
         messages: formattedMessages,
         max_tokens: agent.maxTokens || 16384,
         temperature: agent.temperature ?? 0.7,
@@ -772,6 +808,8 @@ async function chatCodexSSH(agent, messages) {
   const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
   if (!lastUserMsg) return { error: 'No user message found' };
 
+  // Build prompt with full history when no session to resume
+  const prompt = getCodexPrompt(agent, messages, lastUserMsg);
   const workDir = agent.workDir || '~';
 
   // Check for ChatGPT auth or API key
@@ -795,7 +833,7 @@ async function chatCodexSSH(agent, messages) {
     };
   }
 
-  const cmd = `${buildRemoteCdCommand(workDir)} && printf %s ${shellQuote(lastUserMsg.content)} | ${buildCodexExecShellCommand(agent, { stdinPrompt: true })} 2>&1`;
+  const cmd = `${buildRemoteCdCommand(workDir)} && printf %s ${shellQuote(prompt)} | ${buildCodexExecShellCommand(agent, { stdinPrompt: true })} 2>&1`;
 
   try {
     const output = await runSSHCommand(agent, cmd, 300000);
@@ -818,6 +856,8 @@ async function streamCodexSSH(event, requestId, agent, messages) {
     return;
   }
 
+  // Build prompt with full history when no session to resume
+  const prompt = getCodexPrompt(agent, messages, lastUserMsg);
   const workDir = agent.workDir || '~';
 
   // Check for authentication first
@@ -843,7 +883,7 @@ async function streamCodexSSH(event, requestId, agent, messages) {
   }
 
   // Use --json for JSONL event streaming, pipe prompt via stdin
-  const cmd = `${buildRemoteCdCommand(workDir)} && printf %s ${shellQuote(lastUserMsg.content)} | ${buildCodexExecShellCommand(agent, { stdinPrompt: true, json: true })}`;
+  const cmd = `${buildRemoteCdCommand(workDir)} && printf %s ${shellQuote(prompt)} | ${buildCodexExecShellCommand(agent, { stdinPrompt: true, json: true })}`;
 
   const sshUser = agent.sshUser || 'root';
   const sshHost = agent.sshHost;
