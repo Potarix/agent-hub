@@ -50,9 +50,14 @@ function extractHermesResponse(output) {
 }
 
 // ── Build CLI command ─────────────────────────────────────────────────────
+// When agent.sessionId is set, we add --continue so hermes resumes the most
+// recent session instead of starting a new one.  The UI persists sessionId
+// across messages and clears it on /clear, giving us automatic session
+// lifecycle management.
 
 function buildHermesShellCmd(agent, message) {
   let cmd = 'hermes chat';
+  if (agent.sessionId) cmd += ' --continue';
   if (agent.hermesProvider) cmd += ` --provider ${shellQuote(agent.hermesProvider)}`;
   if (agent.model) cmd += ` --model ${shellQuote(agent.model)}`;
   if (agent.hermesWorktree) cmd += ` --worktree ${shellQuote(agent.hermesWorktree)}`;
@@ -178,7 +183,9 @@ function streamFromProcess(proc, event, requestId, timeout) {
           event.sender.send('agent:stream-error', requestId, errMsg);
         }
       } else {
-        event.sender.send('agent:stream-done', requestId, {});
+        // Signal active session so the UI persists it — on follow-up messages
+        // buildHermesShellCmd will see agent.sessionId and add --continue.
+        event.sender.send('agent:stream-done', requestId, { sessionId: 'hermes-active' });
       }
       resolve();
     });
@@ -232,14 +239,14 @@ async function chatHermesLocal(agent, messages) {
       cwd: workDir,
       timeout: CHAT_TIMEOUT_NONSTREAM,
     });
-    return { content: extractHermesResponse(output) };
+    return { content: extractHermesResponse(output), sessionId: 'hermes-active' };
   } catch (err) {
     const errMsg = err.message || '';
     const content = extractHermesResponse(errMsg);
     if (content && content.length > 10 &&
         !content.includes('Permission denied') &&
         !content.includes('command not found')) {
-      return { content };
+      return { content, sessionId: 'hermes-active' };
     }
     return { error: err.message };
   }
@@ -293,6 +300,7 @@ async function chatHermes(agent, messages) {
   const escapedMsg = lastUserMsg.content.replace(/'/g, "'\\''");
 
   let cmd = 'hermes chat';
+  if (agent.sessionId) cmd += ' --continue';
   if (agent.hermesProvider) cmd += ` --provider '${agent.hermesProvider}'`;
   if (agent.model) cmd += ` --model '${agent.model}'`;
   if (agent.hermesWorktree) cmd += ` --worktree '${agent.hermesWorktree}'`;
@@ -300,14 +308,14 @@ async function chatHermes(agent, messages) {
 
   try {
     const output = await runSSHCommand(agent, cmd, CHAT_TIMEOUT_NONSTREAM, { singleQuoteWrap: true });
-    return { content: extractHermesResponse(output) };
+    return { content: extractHermesResponse(output), sessionId: 'hermes-active' };
   } catch (err) {
     const errMsg = err.message || '';
     const content = extractHermesResponse(errMsg);
     if (content && content.length > 20 &&
         !content.includes('Permission denied') &&
         !content.includes('Connection refused')) {
-      return { content };
+      return { content, sessionId: 'hermes-active' };
     }
     return { error: err.message };
   }
