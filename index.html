@@ -2875,10 +2875,6 @@
                       </div>
                     </div>
                     <div className="form-row">
-                      <label>Model (optional)</label>
-                      <input value={form.model || ''} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} placeholder="e.g. claude-sonnet-4-20250514, claude-opus-4-20250514" />
-                    </div>
-                    <div className="form-row">
                       <label>Claude binary path (optional)</label>
                       <input value={form.claudePath || ''} onChange={e => setForm(f => ({ ...f, claudePath: e.target.value }))} placeholder="claude (default, uses PATH)" />
                     </div>
@@ -2920,10 +2916,6 @@
                         Display the model's internal reasoning before its answer
                       </div>
                     </div>
-                    <div className="form-row">
-                      <label>Timeout (seconds)</label>
-                      <input type="number" value={(form.timeout || 300000) / 1000} onChange={e => setForm(f => ({ ...f, timeout: (parseInt(e.target.value) || 300) * 1000 }))} placeholder="300" />
-                    </div>
                   </>
                 )}
 
@@ -2954,10 +2946,6 @@
                         Adds --skip-git-repo-check for Codex runs in this agent's working directory.
                       </div>
                     </div>
-                    <div className="form-row">
-                      <label>Timeout (seconds)</label>
-                      <input type="number" value={(form.timeout || 300000) / 1000} onChange={e => setForm(f => ({ ...f, timeout: (parseInt(e.target.value) || 300) * 1000 }))} placeholder="300" />
-                    </div>
                   </>
                 )}
 
@@ -2971,10 +2959,6 @@
                       <label>Agent ID (optional, uses default if blank)</label>
                       <input value={form.openclawAgent || ''} onChange={e => setForm(f => ({ ...f, openclawAgent: e.target.value }))} placeholder="e.g. main, ops, coding" />
                     </div>
-                    <div className="form-row">
-                      <label>Model Override (optional)</label>
-                      <input value={form.model || ''} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} placeholder="e.g. openai/gpt-4o, anthropic/claude-sonnet" />
-                    </div>
                   </>
                 )}
 
@@ -2987,10 +2971,6 @@
                     <div className="form-row">
                       <label>Model (optional)</label>
                       <input value={form.model || ''} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} placeholder="Uses Hermes default" />
-                    </div>
-                    <div className="form-row">
-                      <label>Provider override (optional, e.g. openai, anthropic)</label>
-                      <input value={form.hermesProvider || ''} onChange={e => setForm(f => ({ ...f, hermesProvider: e.target.value }))} placeholder="Leave blank for default" />
                     </div>
                     <div className="form-row">
                       <label>Worktree path (optional)</label>
@@ -3027,10 +3007,6 @@
                       <label>Agent ID (optional, uses default agent if blank)</label>
                       <input value={form.openclawAgent || ''} onChange={e => setForm(f => ({ ...f, openclawAgent: e.target.value }))} placeholder="e.g. ops, main, coding" />
                     </div>
-                    <div className="form-row">
-                      <label>Model Override (optional)</label>
-                      <input value={form.model || ''} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} placeholder="e.g. openai/gpt-4o, anthropic/claude-sonnet" />
-                    </div>
                   </>
                 )}
 
@@ -3057,10 +3033,6 @@
                     <div className="form-row">
                       <label>Model (optional, uses Hermes default if blank)</label>
                       <input value={form.model || ''} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} placeholder="e.g. nous-hermes-3, gpt-4, etc." />
-                    </div>
-                    <div className="form-row">
-                      <label>Provider override (optional, e.g. openai, anthropic)</label>
-                      <input value={form.hermesProvider || ''} onChange={e => setForm(f => ({ ...f, hermesProvider: e.target.value }))} placeholder="Leave blank for Hermes default" />
                     </div>
                     <div className="form-row">
                       <label>Worktree / workspace path (optional)</label>
@@ -3114,10 +3086,6 @@
                       <input value={form.workDir || ''} onChange={e => setForm(f => ({ ...f, workDir: e.target.value }))} placeholder="e.g. /home/user/projects (blank = home dir)" />
                     </div>
                     <div className="form-row">
-                      <label>Model (optional)</label>
-                      <input value={form.model || ''} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} placeholder="e.g. claude-3-5-sonnet-latest" />
-                    </div>
-                    <div className="form-row">
                       <label>Permission Mode</label>
                       <select value={form.permissionMode || 'acceptEdits'} onChange={e => setForm(f => ({ ...f, permissionMode: e.target.value }))}>
                         <option value="default">Default (asks for every tool)</option>
@@ -3161,12 +3129,8 @@
                       <input value={form.workDir || ''} onChange={e => setForm(f => ({ ...f, workDir: e.target.value }))} placeholder="e.g. /home/user/projects (blank = home dir)" />
                     </div>
                     <div className="form-row">
-                      <label>Model (optional)</label>
-                      <input value={form.model || ''} onChange={e => setForm(f => ({ ...f, model: e.target.value }))} placeholder="e.g. gpt-4o, o1-preview" />
-                    </div>
-                    <div className="form-row">
                       <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <input type="checkbox" checked={form.skipGitRepoCheck !== false} onChange={e => setForm(f => ({ ...f, skipGitRepoCheck: e.target.checked }))} />
+                        <input type="checkbox" checked={form.skipGitRepoCheck !== false} onChange={e => setForm(f => ({ ...f, skipGitRepoCheck: e.target.checked }))} style={{ width: 'auto' }} />
                         Skip git repository check
                       </label>
                     </div>
@@ -3192,14 +3156,6 @@
                 )}
 
                 <h3>Behavior</h3>
-                <div className="form-row">
-                  <label>System Prompt</label>
-                  <input value={form.systemPrompt || ''} onChange={e => setForm(f => ({ ...f, systemPrompt: e.target.value }))} placeholder="You are a helpful assistant." />
-                </div>
-                <div className="form-row">
-                  <label>Max Tokens</label>
-                  <input type="number" value={form.maxTokens || 4096} onChange={e => setForm(f => ({ ...f, maxTokens: parseInt(e.target.value) || 16384 }))} />
-                </div>
                 {form.provider === 'openai-compat' && (
                   <div className="form-row">
                     <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

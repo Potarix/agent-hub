@@ -59,7 +59,6 @@ function buildHermesShellCmd(agent, message) {
   let cmd = 'hermes chat';
   if (agent.sessionId) cmd += ' --continue';
   if (agent.hermesProvider) cmd += ` --provider ${shellQuote(agent.hermesProvider)}`;
-  if (agent.model) cmd += ` --model ${shellQuote(agent.model)}`;
   if (agent.hermesWorktree) cmd += ` --worktree ${shellQuote(agent.hermesWorktree)}`;
   cmd += ` -q ${shellQuote(message)}`;
   return cmd;
@@ -302,7 +301,6 @@ async function chatHermes(agent, messages) {
   let cmd = 'hermes chat';
   if (agent.sessionId) cmd += ' --continue';
   if (agent.hermesProvider) cmd += ` --provider '${agent.hermesProvider}'`;
-  if (agent.model) cmd += ` --model '${agent.model}'`;
   if (agent.hermesWorktree) cmd += ` --worktree '${agent.hermesWorktree}'`;
   cmd += ` -q '${escapedMsg}' 2>&1`;
 
