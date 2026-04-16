@@ -66,33 +66,6 @@ When you launch Agent Hub, you can add agents by clicking the "+" button and con
 #### OpenClaw
 - Requires OpenClaw CLI (`openclaw`)
 
-## 🏗️ Architecture
-
-```
-agent-hub/
-├── main.js              # Electron main process
-├── index.html           # React UI (single file)
-├── preload.js           # Electron preload script
-├── providers/           # AI provider implementations
-│   ├── claude-code.js   # Claude Code SDK integration
-│   ├── openai-compat.js # OpenAI API integration
-│   ├── codex.js         # Codex provider
-│   ├── hermes.js        # Hermes provider
-│   └── openclaw.js      # OpenClaw provider
-├── lib/                 # Utility modules
-│   ├── state.js         # Application state management
-│   ├── http.js          # HTTP utilities
-│   └── ssh.js           # SSH connection handling
-├── auth.js              # Authentication handlers
-└── slash-commands.js    # Command processing
-```
-
-### Key Technologies
-- **Electron**: Desktop application framework
-- **React**: UI components (loaded via CDN)
-- **Node.js**: Backend runtime
-- **IPC**: Inter-process communication for main/renderer
-
 ## 📝 License
 
 MIT License - see LICENSE file for details
