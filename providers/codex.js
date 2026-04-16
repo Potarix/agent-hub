@@ -95,11 +95,25 @@ function extractCodexResponse(output) {
   return cleaned || output.trim();
 }
 
+function normalizeCodexReasoningEffort(agent = {}) {
+  const raw = String(agent.reasoningEffort || agent.effortLevel || '').trim();
+  if (!raw) return '';
+  if (raw === 'max') return 'xhigh';
+  if (['minimal', 'low', 'medium', 'high', 'xhigh'].includes(raw)) return raw;
+  return '';
+}
+
+function buildCodexReasoningConfig(reasoningEffort) {
+  return `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`;
+}
+
 function buildCodexExecArgs(agent, { stdinPrompt = false, json = false } = {}) {
   const args = ['exec', '--full-auto', '--color', 'never'];
+  const reasoningEffort = normalizeCodexReasoningEffort(agent);
   if (json) args.push('--json');
   if (agent.skipGitRepoCheck !== false) args.push('--skip-git-repo-check');
   if (agent.model) args.push('--model', agent.model);
+  if (reasoningEffort) args.push('--config', buildCodexReasoningConfig(reasoningEffort));
   if (agent.codexArgs) args.push(...agent.codexArgs.split(/\s+/).filter(Boolean));
   if (stdinPrompt) args.push('-');
   return args;
@@ -107,9 +121,11 @@ function buildCodexExecArgs(agent, { stdinPrompt = false, json = false } = {}) {
 
 function buildCodexExecShellCommand(agent, { stdinPrompt = false, json = false } = {}) {
   const parts = ['codex', 'exec', '--full-auto', '--color', 'never'];
+  const reasoningEffort = normalizeCodexReasoningEffort(agent);
   if (json) parts.push('--json');
   if (agent.skipGitRepoCheck !== false) parts.push('--skip-git-repo-check');
   if (agent.model) parts.push('--model', agent.model);
+  if (reasoningEffort) parts.push('--config', shellQuote(buildCodexReasoningConfig(reasoningEffort)));
   if (agent.codexArgs) parts.push(agent.codexArgs);
   if (stdinPrompt) parts.push('-');
   return parts.join(' ');
@@ -317,6 +333,7 @@ function buildCodexSDKOptions(agent, apiKey) {
 }
 
 function buildCodexThreadOptions(agent) {
+  const reasoningEffort = normalizeCodexReasoningEffort(agent);
   const options = {
     sandboxMode: agent.sandboxMode || 'workspace-write',
     workingDirectory: expandHomeDir(agent.workDir) || process.env.HOME,
@@ -326,7 +343,7 @@ function buildCodexThreadOptions(agent) {
   };
 
   if (agent.model) options.model = agent.model;
-  if (agent.reasoningEffort) options.modelReasoningEffort = agent.reasoningEffort;
+  if (reasoningEffort) options.modelReasoningEffort = reasoningEffort;
   if (typeof agent.networkAccessEnabled === 'boolean') options.networkAccessEnabled = agent.networkAccessEnabled;
   if (Array.isArray(agent.additionalDirectories)) options.additionalDirectories = agent.additionalDirectories.map(expandHomeDir);
   return options;
@@ -735,6 +752,7 @@ async function streamCodexLocal(event, requestId, agent, messages) {
       const openai = await getOpenAISDK(apiKey);
       const model = agent.model || (await listCodexModelsLocal(agent)).defaultModel;
       if (!model) throw new Error('No Codex model selected and model discovery returned no default.');
+      const reasoningEffort = normalizeCodexReasoningEffort(agent);
 
       // Build proper messages array for OpenAI
       const formattedMessages = messages.map(m => ({
@@ -742,13 +760,16 @@ async function streamCodexLocal(event, requestId, agent, messages) {
         content: m.content
       }));
 
-      const stream = await openai.chat.completions.create({
+      const request = {
         model,
         messages: formattedMessages,
         max_tokens: agent.maxTokens || 16384,
         temperature: agent.temperature ?? 0.7,
         stream: true,
-      });
+      };
+      if (reasoningEffort) request.reasoning_effort = reasoningEffort;
+
+      const stream = await openai.chat.completions.create(request);
 
       // Handle abortions
       const abortController = new AbortController();
@@ -892,6 +913,7 @@ async function chatCodexLocal(agent, messages) {
       const openai = await getOpenAISDK(apiKey);
       const model = agent.model || (await listCodexModelsLocal(agent)).defaultModel;
       if (!model) throw new Error('No Codex model selected and model discovery returned no default.');
+      const reasoningEffort = normalizeCodexReasoningEffort(agent);
 
       // Build proper messages array for OpenAI
       const formattedMessages = messages.map(m => ({
@@ -899,12 +921,15 @@ async function chatCodexLocal(agent, messages) {
         content: m.content
       }));
 
-      const completion = await openai.chat.completions.create({
+      const request = {
         model,
         messages: formattedMessages,
         max_tokens: agent.maxTokens || 16384,
         temperature: agent.temperature ?? 0.7,
-      });
+      };
+      if (reasoningEffort) request.reasoning_effort = reasoningEffort;
+
+      const completion = await openai.chat.completions.create(request);
 
       const msg = completion.choices?.[0]?.message;
       return {
