@@ -93,46 +93,9 @@ agent-hub/
 - **Node.js**: Backend runtime
 - **IPC**: Inter-process communication for main/renderer
 
-## 🛠️ Development
-
-### Running in Development Mode
-```bash
-npm run dev
-```
-This enables developer tools and hot reload.
-
-### Project Structure
-- **Main Process** (`main.js`): Handles system operations, provider communication
-- **Renderer Process** (`index.html`): React-based UI
-- **Providers**: Modular architecture for easy provider addition
-- **IPC Handlers**: Secure communication between processes
-
-### Adding New Providers
-1. Create provider file in `providers/`
-2. Implement required methods:
-   - `chat()` or `stream()`
-   - `ping()` for health checks
-3. Register in `main.js` IPC handlers
-4. Add UI support in `index.html`
-
 ## 📝 License
 
 MIT License - see LICENSE file for details
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-## 🔗 Links
-
-- [Issue Tracker](https://github.com/OmarDadabhoy/agenthub/issues)
-- [Documentation](https://github.com/OmarDadabhoy/agenthub/wiki)
 
 ## 👥 Author
 
