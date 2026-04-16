@@ -397,6 +397,15 @@
     }
     .model-switcher-dropdown button:hover { background: var(--accent-subtle); color: var(--text-0); }
     .model-switcher-dropdown button.active { color: var(--accent); font-weight: 600; }
+    .model-switcher-dropdown button:disabled { cursor: default; opacity: 0.65; }
+    .model-switcher-dropdown button:disabled:hover { background: none; color: var(--text-1); }
+    .model-switcher-note {
+      padding: 8px 12px;
+      color: var(--text-2);
+      font-size: 11px;
+      line-height: 1.35;
+      border-top: 1px solid var(--border);
+    }
 
     .completion-indicator {
       display: flex;
@@ -1703,6 +1712,33 @@
       { id: 'haiku', label: 'Haiku' },
     ];
 
+    function isClaudeCodeProvider(provider) {
+      return provider === 'claude-code' || provider === 'claude-code-ssh';
+    }
+
+    function isCodexProvider(provider) {
+      return provider === 'codex' || provider === 'codex-ssh';
+    }
+
+    function formatModelLabel(modelId) {
+      if (!modelId) return '';
+      const parts = modelId.split('-');
+      const formatPart = (part) => {
+        if (/^o\d/i.test(part)) return part.toUpperCase();
+        if (/^\d/.test(part)) return part;
+        return part.charAt(0).toUpperCase() + part.slice(1);
+      };
+      if (/^gpt$/i.test(parts[0]) && parts[1]) {
+        return [`GPT-${parts[1]}`, ...parts.slice(2).map(formatPart)].join(' ');
+      }
+      return parts.map(formatPart).join(' ');
+    }
+
+    function getStaticModelAliases(provider) {
+      if (isClaudeCodeProvider(provider)) return CLAUDE_MODEL_ALIASES;
+      return [];
+    }
+
     // ── Sidebar ──
     function Sidebar({ agents, activeId, statuses, loadingAgents, completionStatus, onSelect, onAdd, onOpenSettings, lastActivityTime }) {
       // Sort agents by last activity time (most recent first)
@@ -1746,7 +1782,7 @@
                     </div>
                     <div className="agent-provider">
                       {agent.provider === 'claude-code' ? 'Claude Code' : agent.provider === 'claude-code-ssh' ? 'Claude Code SSH' : agent.provider === 'openclaw-local' ? 'OpenClaw Local' : agent.provider === 'openclaw' ? 'OpenClaw' : agent.provider === 'hermes-local' ? 'Hermes Local' : agent.provider === 'hermes' ? 'Hermes SSH' : agent.provider === 'codex' ? 'Codex' : agent.provider === 'codex-ssh' ? 'Codex SSH' : agent.provider === 'openai-compat' ? 'OpenAI Compat' : agent.provider}
-                      {agent.model ? ` / ${(CLAUDE_MODEL_ALIASES.find(m => m.id === agent.model) || {}).label || agent.model}` : ''}
+                      {agent.model ? ` / ${(getStaticModelAliases(agent.provider).find(m => m.id === agent.model) || {}).label || formatModelLabel(agent.model) || agent.model}` : ''}
                     </div>
                   </div>
                   <div className={`status-dot ${statuses[agent.id] || 'offline'}`} />
@@ -1994,6 +2030,10 @@
       const [selectedImages, setSelectedImages] = useState([]);
       const [isDragging, setIsDragging] = useState(false);
       const [modelOpen, setModelOpen] = useState(false);
+      const [codexModels, setCodexModels] = useState([]);
+      const [codexDefaultModel, setCodexDefaultModel] = useState('');
+      const [modelLoadState, setModelLoadState] = useState('idle');
+      const [modelLoadError, setModelLoadError] = useState('');
       const bottomRef = useRef(null);
       const inputRef = useRef(null);
       const chatAreaRef = useRef(null);
@@ -2004,6 +2044,9 @@
       const activeRequestIdRef = useRef(null);
       const alwaysAllowedToolsRef = useRef(new Set());
       const modelRef = useRef(null);
+      const isClaudeProvider = isClaudeCodeProvider(agent.provider);
+      const isCodexAgent = isCodexProvider(agent.provider);
+      const hasModelPicker = isClaudeProvider || isCodexAgent;
 
       // Close model dropdown on outside click
       useEffect(() => {
@@ -2014,14 +2057,61 @@
         return () => document.removeEventListener('mousedown', handler);
       }, []);
 
-      const isClaudeProvider = agent.provider === 'claude-code' || agent.provider === 'claude-code-ssh';
-      const currentModel = agent.model || CLAUDE_MODEL_ALIASES[0].id;
-      const currentModelLabel = CLAUDE_MODEL_ALIASES.find(m => m.id === currentModel)?.label || agent.model || 'Sonnet';
+      useEffect(() => {
+        if (!isCodexAgent) {
+          setCodexModels([]);
+          setCodexDefaultModel('');
+          setModelLoadState('idle');
+          setModelLoadError('');
+          return;
+        }
+
+        let cancelled = false;
+        setModelLoadState('loading');
+        setModelLoadError('');
+
+        window.agentHub.listModels(agent)
+          .then(res => {
+            if (cancelled) return;
+            const models = Array.isArray(res?.models) ? res.models : [];
+            setCodexModels(models);
+            setCodexDefaultModel(res?.defaultModel || models[0]?.id || '');
+            setModelLoadError(res?.error || '');
+            setModelLoadState('ready');
+          })
+          .catch(err => {
+            if (cancelled) return;
+            setCodexModels([]);
+            setCodexDefaultModel('');
+            setModelLoadError(err.message || 'Could not load Codex models.');
+            setModelLoadState('error');
+          });
+
+        return () => { cancelled = true; };
+      }, [
+        isCodexAgent,
+        agent.id,
+        agent.provider,
+        agent.codexPath,
+        agent.sshHost,
+        agent.sshUser,
+        agent.sshPort,
+        agent.sshKey,
+        agent.apiKey,
+      ]);
+
+      const discoveredModelAliases = isCodexAgent ? codexModels : getStaticModelAliases(agent.provider);
+      const modelAliases = agent.model && !discoveredModelAliases.some(m => m.id === agent.model)
+        ? [{ id: agent.model, label: formatModelLabel(agent.model) }, ...discoveredModelAliases]
+        : discoveredModelAliases;
+      const currentModel = agent.model || codexDefaultModel || (modelAliases[0]?.id || '');
+      const currentModelLabel = modelAliases.find(m => m.id === currentModel)?.label || formatModelLabel(currentModel) || (isCodexAgent ? (modelLoadState === 'loading' ? 'Loading models...' : 'Codex model') : 'Sonnet');
 
       const switchModel = (modelId) => {
         onUpdateAgent({ ...agent, model: modelId });
         setModelOpen(false);
       };
+
       // Keep refs to the latest agent/isActive so stream callbacks never use a stale closure
       const agentRef = useRef(agent);
       agentRef.current = agent;
@@ -2600,14 +2690,17 @@
                   <span className={`status-dot ${status || 'offline'}`} style={{ width: 6, height: 6 }} />
                   {status === 'online' ? 'Connected' : status === 'checking' ? 'Checking...' : 'Disconnected'}
                 </div>
-                {isClaudeProvider && (
+                {hasModelPicker && (
                   <div className="model-switcher" ref={modelRef} style={{ marginTop: 2 }}>
                     <button className="model-switcher-btn" onClick={() => setModelOpen(o => !o)}>
                       {currentModelLabel} ▾
                     </button>
                     {modelOpen && (
                       <div className="model-switcher-dropdown">
-                        {CLAUDE_MODEL_ALIASES.map(m => (
+                        {isCodexAgent && modelLoadState === 'loading' && (
+                          <button disabled>Loading models...</button>
+                        )}
+                        {modelAliases.map(m => (
                           <button
                             key={m.id}
                             className={currentModel === m.id ? 'active' : ''}
@@ -2617,6 +2710,16 @@
                             {currentModel === m.id && ' \u2713'}
                           </button>
                         ))}
+                        {isCodexAgent && modelLoadState !== 'loading' && modelAliases.length === 0 && (
+                          <div className="model-switcher-note">
+                            {modelLoadError || 'No Codex models found.'}
+                          </div>
+                        )}
+                        {isCodexAgent && modelLoadError && modelAliases.length > 0 && (
+                          <div className="model-switcher-note">
+                            {modelLoadError}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

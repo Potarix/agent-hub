@@ -8,7 +8,7 @@ const { makeRequest } = require('./lib/http');
 const { chatOpenClaw, streamOpenClaw, pingOpenClaw, chatOpenClawLocal, pingOpenClawLocal } = require('./providers/openclaw-improved');
 const { chatHermes, streamHermes, pingHermes, chatHermesLocal, streamHermesLocal, pingHermesLocal } = require('./providers/hermes');
 const { chatClaudeCode, streamClaudeCode, pingClaudeCode, chatClaudeCodeSSH, streamClaudeCodeSSH, pingClaudeCodeSSH, resolveToolApproval } = require('./providers/claude-code');
-const { chatCodexLocal, streamCodexLocal, pingCodexLocal, chatCodexSSH, streamCodexSSH, pingCodexSSH } = require('./providers/codex');
+const { chatCodexLocal, streamCodexLocal, pingCodexLocal, listCodexModelsLocal, chatCodexSSH, streamCodexSSH, pingCodexSSH, listCodexModelsSSH } = require('./providers/codex');
 const { chatOpenAI, streamOpenAI } = require('./providers/openai-compat');
 
 // Feature modules
@@ -152,6 +152,16 @@ ipcMain.handle('agent:ping', async (_event, agent) => {
     return { online: res.status === 200 };
   } catch (err) {
     return { online: false, error: err.message };
+  }
+});
+
+ipcMain.handle('agent:list-models', async (_event, agent) => {
+  try {
+    if (agent.provider === 'codex') return await listCodexModelsLocal(agent);
+    if (agent.provider === 'codex-ssh') return await listCodexModelsSSH(agent);
+    return { models: [], defaultModel: '', source: 'none' };
+  } catch (err) {
+    return { models: [], defaultModel: '', source: 'error', error: err.message };
   }
 });
 

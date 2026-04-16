@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('agentHub', {
 
   // Ping agent
   ping: (agent) => ipcRenderer.invoke('agent:ping', agent),
+  listModels: (agent) => ipcRenderer.invoke('agent:list-models', agent),
 
   // Slash commands
   getSlashCommands: (provider) => ipcRenderer.invoke('agent:slash-commands', provider),
