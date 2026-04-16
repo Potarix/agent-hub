@@ -107,7 +107,7 @@ function buildCodexReasoningConfig(reasoningEffort) {
   return `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`;
 }
 
-function buildCodexExecArgs(agent, { stdinPrompt = false, json = false } = {}) {
+function buildCodexExecArgs(agent, { stdinPrompt = false, json = false, resumeSession = true } = {}) {
   const args = ['exec', '--full-auto', '--color', 'never'];
   const reasoningEffort = normalizeCodexReasoningEffort(agent);
   if (json) args.push('--json');
@@ -115,11 +115,12 @@ function buildCodexExecArgs(agent, { stdinPrompt = false, json = false } = {}) {
   if (agent.model) args.push('--model', agent.model);
   if (reasoningEffort) args.push('--config', buildCodexReasoningConfig(reasoningEffort));
   if (agent.codexArgs) args.push(...agent.codexArgs.split(/\s+/).filter(Boolean));
+  if (resumeSession && agent.sessionId) args.push('resume', agent.sessionId);
   if (stdinPrompt) args.push('-');
   return args;
 }
 
-function buildCodexExecShellCommand(agent, { stdinPrompt = false, json = false } = {}) {
+function buildCodexExecShellCommand(agent, { stdinPrompt = false, json = false, resumeSession = true } = {}) {
   const parts = ['codex', 'exec', '--full-auto', '--color', 'never'];
   const reasoningEffort = normalizeCodexReasoningEffort(agent);
   if (json) parts.push('--json');
@@ -127,6 +128,7 @@ function buildCodexExecShellCommand(agent, { stdinPrompt = false, json = false }
   if (agent.model) parts.push('--model', agent.model);
   if (reasoningEffort) parts.push('--config', shellQuote(buildCodexReasoningConfig(reasoningEffort)));
   if (agent.codexArgs) parts.push(agent.codexArgs);
+  if (resumeSession && agent.sessionId) parts.push('resume', shellQuote(agent.sessionId));
   if (stdinPrompt) parts.push('-');
   return parts.join(' ');
 }

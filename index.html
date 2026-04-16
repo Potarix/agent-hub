@@ -2277,9 +2277,9 @@
           if (setLastActivityTime) {
             setLastActivityTime(prev => ({ ...prev, [agentRef.current.id]: Date.now() }));
           }
-          // Persist Claude Code session ID — use ref for latest agent
+          // Persist resumable agent session IDs — use ref for latest agent
           const currentAgent = agentRef.current;
-          if (meta?.sessionId && !currentAgent.sessionId && onUpdateAgent) {
+          if (meta?.sessionId && currentAgent.sessionId !== meta.sessionId && onUpdateAgent) {
             onUpdateAgent({ ...currentAgent, sessionId: meta.sessionId });
           }
 
