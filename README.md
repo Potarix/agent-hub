@@ -6,23 +6,7 @@ Imessage for your AI Agents. Chat with your hermes, Openclaw, Codex, and claude 
 ![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-## 📋 Prerequisites
-
-Before running Agent Hub, ensure you have the following installed:
-
-### Required
-- **Node.js** (v18 or higher)
-- **npm** (comes with Node.js)
-- **macOS** (currently optimized for Mac)
-
-### Optional (depending on which providers you want to use)
-- **Claude CLI**: For Claude Code provider (`npm install -g @anthropic-ai/claude-code`)
-- **OpenClaw CLI**: For OpenClaw provider (`npm install -g openclaw`)
-- **Codex CLI**: For Codex provider (`npm i -g @openai/codex`)
-- **Hermes CLI**: For Hermes provider (installation varies)
-- **SSH Access**: For remote provider connections
-
-## 🚀 Installation
+## 🚀 Quickstart
 
 1. **Clone the repository**
 ```bash

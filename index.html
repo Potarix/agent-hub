@@ -377,6 +377,57 @@
     .chat-header-top { display: flex; align-items: center; justify-content: center; width: 100%; position: relative; }
     .chat-header-actions { position: absolute; right: 0; top: 0; display: flex; gap: 8px; }
 
+    /* ── Model Switcher ── */
+    .model-switcher { position: relative; display: inline-flex; }
+    .model-switcher-btn {
+      background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+      color: var(--text-1); font-size: 10px; padding: 2px 8px; cursor: pointer;
+      display: flex; align-items: center; gap: 4px; transition: var(--transition);
+    }
+    .model-switcher-btn:hover { background: var(--bg-3); color: var(--text-0); }
+    .model-switcher-dropdown {
+      position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+      margin-top: 4px; background: var(--bg-1); border: 1px solid var(--border);
+      border-radius: var(--radius); box-shadow: var(--shadow-md);
+      min-width: 200px; z-index: 100; overflow: hidden;
+    }
+    .model-switcher-dropdown button {
+      width: 100%; text-align: left; padding: 8px 12px; background: none;
+      border: none; color: var(--text-1); font-size: 12px; cursor: pointer;
+    }
+    .model-switcher-dropdown button:hover { background: var(--accent-subtle); color: var(--text-0); }
+    .model-switcher-dropdown button.active { color: var(--accent); font-weight: 600; }
+    .model-switcher-dropdown button:disabled { cursor: default; opacity: 0.65; }
+    .model-switcher-dropdown button:disabled:hover { background: none; color: var(--text-1); }
+
+    /* ── Effort Switcher ── */
+    .effort-switcher { position: relative; display: inline-flex; }
+    .effort-switcher-btn {
+      background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+      color: var(--text-1); font-size: 10px; padding: 2px 8px; cursor: pointer;
+      display: flex; align-items: center; gap: 4px; transition: var(--transition);
+    }
+    .effort-switcher-btn:hover { background: var(--bg-3); color: var(--text-0); }
+    .effort-switcher-dropdown {
+      position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+      margin-top: 4px; background: var(--bg-1); border: 1px solid var(--border);
+      border-radius: var(--radius); box-shadow: var(--shadow-md);
+      min-width: 160px; z-index: 100; overflow: hidden;
+    }
+    .effort-switcher-dropdown button {
+      width: 100%; text-align: left; padding: 8px 12px; background: none;
+      border: none; color: var(--text-1); font-size: 12px; cursor: pointer;
+    }
+    .effort-switcher-dropdown button:hover { background: var(--accent-subtle); color: var(--text-0); }
+    .effort-switcher-dropdown button.active { color: var(--accent); font-weight: 600; }
+    .model-switcher-note {
+      padding: 8px 12px;
+      color: var(--text-2);
+      font-size: 11px;
+      line-height: 1.35;
+      border-top: 1px solid var(--border);
+    }
+
     .completion-indicator {
       display: flex;
       align-items: center;
@@ -1675,6 +1726,88 @@
       );
     }
 
+    // ── Model aliases (Claude Code resolves these to the latest version) ──
+    const CLAUDE_MODEL_ALIASES = [
+      { id: 'sonnet', label: 'Sonnet' },
+      { id: 'opus', label: 'Opus' },
+      { id: 'haiku', label: 'Haiku' },
+    ];
+
+    const CLAUDE_EFFORT_LEVELS = [
+      { id: '', label: 'Default' },
+      { id: 'low', label: 'Low' },
+      { id: 'medium', label: 'Medium' },
+      { id: 'high', label: 'High' },
+      { id: 'max', label: 'Max' },
+    ];
+
+    const CODEX_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh'];
+    const CODEX_REASONING_EFFORT_LABELS = {
+      minimal: 'Minimal',
+      low: 'Low',
+      medium: 'Medium',
+      high: 'High',
+      xhigh: 'Extra High',
+    };
+
+    function isClaudeCodeProvider(provider) {
+      return provider === 'claude-code' || provider === 'claude-code-ssh';
+    }
+
+    function isCodexProvider(provider) {
+      return provider === 'codex' || provider === 'codex-ssh';
+    }
+
+    function formatModelLabel(modelId) {
+      if (!modelId) return '';
+      const parts = modelId.split('-');
+      const formatPart = (part) => {
+        if (/^o\d/i.test(part)) return part.toUpperCase();
+        if (/^\d/.test(part)) return part;
+        return part.charAt(0).toUpperCase() + part.slice(1);
+      };
+      if (/^gpt$/i.test(parts[0]) && parts[1]) {
+        return [`GPT-${parts[1]}`, ...parts.slice(2).map(formatPart)].join(' ');
+      }
+      return parts.map(formatPart).join(' ');
+    }
+
+    function getStaticModelAliases(provider) {
+      if (isClaudeCodeProvider(provider)) return CLAUDE_MODEL_ALIASES;
+      return [];
+    }
+
+    function normalizeCodexReasoningEffort(effort) {
+      if (!effort) return '';
+      if (effort === 'max') return 'xhigh';
+      if (['minimal', 'low', 'medium', 'high', 'xhigh'].includes(effort)) return effort;
+      return '';
+    }
+
+    function formatReasoningEffortLabel(effort) {
+      return CODEX_REASONING_EFFORT_LABELS[effort] || formatModelLabel(effort);
+    }
+
+    function uniqueReasoningEfforts(efforts) {
+      return [...new Set((efforts || []).map(normalizeCodexReasoningEffort).filter(Boolean))];
+    }
+
+    function getCodexReasoningEffortOptions(modelInfo) {
+      const supportedEfforts = uniqueReasoningEfforts(modelInfo?.supportedReasoningLevels);
+      const defaultEffort = normalizeCodexReasoningEffort(modelInfo?.defaultReasoningLevel);
+      const efforts = supportedEfforts.length ? supportedEfforts : CODEX_REASONING_EFFORTS;
+      return [
+        { id: '', label: defaultEffort ? `Default (${formatReasoningEffortLabel(defaultEffort)})` : 'Default' },
+        ...efforts.map(id => ({ id, label: formatReasoningEffortLabel(id) })),
+      ];
+    }
+
+    function updateCodexReasoningEffort(agent, reasoningEffort) {
+      const updated = { ...agent, reasoningEffort };
+      delete updated.effortLevel;
+      return updated;
+    }
+
     // ── Sidebar ──
     function Sidebar({ agents, activeId, statuses, loadingAgents, completionStatus, onSelect, onAdd, onOpenSettings, lastActivityTime }) {
       // Sort agents by last activity time (most recent first)
@@ -1718,7 +1851,7 @@
                     </div>
                     <div className="agent-provider">
                       {agent.provider === 'claude-code' ? 'Claude Code' : agent.provider === 'claude-code-ssh' ? 'Claude Code SSH' : agent.provider === 'openclaw-local' ? 'OpenClaw Local' : agent.provider === 'openclaw' ? 'OpenClaw' : agent.provider === 'hermes-local' ? 'Hermes Local' : agent.provider === 'hermes' ? 'Hermes SSH' : agent.provider === 'codex' ? 'Codex' : agent.provider === 'codex-ssh' ? 'Codex SSH' : agent.provider === 'openai-compat' ? 'OpenAI Compat' : agent.provider}
-                      {agent.model ? ` / ${agent.model}` : ''}
+                      {agent.model ? ` / ${(getStaticModelAliases(agent.provider).find(m => m.id === agent.model) || {}).label || formatModelLabel(agent.model) || agent.model}` : ''}
                     </div>
                   </div>
                   <div className={`status-dot ${statuses[agent.id] || 'offline'}`} />
@@ -1965,6 +2098,12 @@
       const [showThinking, setShowThinking] = useState(true);
       const [selectedImages, setSelectedImages] = useState([]);
       const [isDragging, setIsDragging] = useState(false);
+      const [modelOpen, setModelOpen] = useState(false);
+      const [effortOpen, setEffortOpen] = useState(false);
+      const [codexModels, setCodexModels] = useState([]);
+      const [codexDefaultModel, setCodexDefaultModel] = useState('');
+      const [modelLoadState, setModelLoadState] = useState('idle');
+      const [modelLoadError, setModelLoadError] = useState('');
       const bottomRef = useRef(null);
       const inputRef = useRef(null);
       const chatAreaRef = useRef(null);
@@ -1974,6 +2113,91 @@
       const toolUsesRef = useRef([]);
       const activeRequestIdRef = useRef(null);
       const alwaysAllowedToolsRef = useRef(new Set());
+      const modelRef = useRef(null);
+      const effortRef = useRef(null);
+      const isClaudeProvider = isClaudeCodeProvider(agent.provider);
+      const isCodexAgent = isCodexProvider(agent.provider);
+      const hasModelPicker = isClaudeProvider || isCodexAgent;
+      const hasEffortPicker = isClaudeProvider || isCodexAgent;
+
+      // Close model/effort dropdowns on outside click
+      useEffect(() => {
+        const handler = (e) => {
+          if (modelRef.current && !modelRef.current.contains(e.target)) setModelOpen(false);
+          if (effortRef.current && !effortRef.current.contains(e.target)) setEffortOpen(false);
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+      }, []);
+
+      useEffect(() => {
+        if (!isCodexAgent) {
+          setCodexModels([]);
+          setCodexDefaultModel('');
+          setModelLoadState('idle');
+          setModelLoadError('');
+          return;
+        }
+
+        let cancelled = false;
+        setModelLoadState('loading');
+        setModelLoadError('');
+
+        window.agentHub.listModels(agent)
+          .then(res => {
+            if (cancelled) return;
+            const models = Array.isArray(res?.models) ? res.models : [];
+            setCodexModels(models);
+            setCodexDefaultModel(res?.defaultModel || models[0]?.id || '');
+            setModelLoadError(res?.error || '');
+            setModelLoadState('ready');
+          })
+          .catch(err => {
+            if (cancelled) return;
+            setCodexModels([]);
+            setCodexDefaultModel('');
+            setModelLoadError(err.message || 'Could not load Codex models.');
+            setModelLoadState('error');
+          });
+
+        return () => { cancelled = true; };
+      }, [
+        isCodexAgent,
+        agent.id,
+        agent.provider,
+        agent.codexPath,
+        agent.sshHost,
+        agent.sshUser,
+        agent.sshPort,
+        agent.sshKey,
+        agent.apiKey,
+      ]);
+
+      const discoveredModelAliases = isCodexAgent ? codexModels : getStaticModelAliases(agent.provider);
+      const modelAliases = agent.model && !discoveredModelAliases.some(m => m.id === agent.model)
+        ? [{ id: agent.model, label: formatModelLabel(agent.model) }, ...discoveredModelAliases]
+        : discoveredModelAliases;
+      const currentModel = agent.model || codexDefaultModel || (modelAliases[0]?.id || '');
+      const currentModelLabel = modelAliases.find(m => m.id === currentModel)?.label || formatModelLabel(currentModel) || (isCodexAgent ? (modelLoadState === 'loading' ? 'Loading models...' : 'Codex model') : 'Sonnet');
+
+      const switchModel = (modelId) => {
+        onUpdateAgent({ ...agent, model: modelId });
+        setModelOpen(false);
+      };
+
+      const currentCodexModelInfo = isCodexAgent ? modelAliases.find(m => m.id === currentModel) : null;
+      const baseEffortLevels = isCodexAgent ? getCodexReasoningEffortOptions(currentCodexModelInfo) : CLAUDE_EFFORT_LEVELS;
+      const currentEffort = isCodexAgent ? normalizeCodexReasoningEffort(agent.reasoningEffort || agent.effortLevel) : (agent.effortLevel || '');
+      const effortLevels = currentEffort && !baseEffortLevels.some(e => e.id === currentEffort)
+        ? [...baseEffortLevels, { id: currentEffort, label: formatReasoningEffortLabel(currentEffort) }]
+        : baseEffortLevels;
+      const currentEffortLabel = effortLevels.find(e => e.id === currentEffort)?.label || 'Default';
+
+      const switchEffort = (effortId) => {
+        onUpdateAgent(isCodexAgent ? updateCodexReasoningEffort(agent, effortId) : { ...agent, effortLevel: effortId });
+        setEffortOpen(false);
+      };
+
       // Keep refs to the latest agent/isActive so stream callbacks never use a stale closure
       const agentRef = useRef(agent);
       agentRef.current = agent;
@@ -2053,9 +2277,9 @@
           if (setLastActivityTime) {
             setLastActivityTime(prev => ({ ...prev, [agentRef.current.id]: Date.now() }));
           }
-          // Persist Claude Code session ID — use ref for latest agent
+          // Persist resumable agent session IDs — use ref for latest agent
           const currentAgent = agentRef.current;
-          if (meta?.sessionId && !currentAgent.sessionId && onUpdateAgent) {
+          if (meta?.sessionId && currentAgent.sessionId !== meta.sessionId && onUpdateAgent) {
             onUpdateAgent({ ...currentAgent, sessionId: meta.sessionId });
           }
 
@@ -2552,6 +2776,61 @@
                   <span className={`status-dot ${status || 'offline'}`} style={{ width: 6, height: 6 }} />
                   {status === 'online' ? 'Connected' : status === 'checking' ? 'Checking...' : 'Disconnected'}
                 </div>
+                {hasModelPicker && (
+                  <div className="model-switcher" ref={modelRef} style={{ marginTop: 2 }}>
+                    <button className="model-switcher-btn" onClick={() => setModelOpen(o => !o)}>
+                      {currentModelLabel} ▾
+                    </button>
+                    {modelOpen && (
+                      <div className="model-switcher-dropdown">
+                        {isCodexAgent && modelLoadState === 'loading' && (
+                          <button disabled>Loading models...</button>
+                        )}
+                        {modelAliases.map(m => (
+                          <button
+                            key={m.id}
+                            className={currentModel === m.id ? 'active' : ''}
+                            onClick={() => switchModel(m.id)}
+                          >
+                            {m.label}
+                            {currentModel === m.id && ' \u2713'}
+                          </button>
+                        ))}
+                        {isCodexAgent && modelLoadState !== 'loading' && modelAliases.length === 0 && (
+                          <div className="model-switcher-note">
+                            {modelLoadError || 'No Codex models found.'}
+                          </div>
+                        )}
+                        {isCodexAgent && modelLoadError && modelAliases.length > 0 && (
+                          <div className="model-switcher-note">
+                            {modelLoadError}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {hasEffortPicker && (
+                  <div className="effort-switcher" ref={effortRef} style={{ marginTop: 2 }}>
+                    <button className="effort-switcher-btn" onClick={() => setEffortOpen(o => !o)}>
+                      Effort: {currentEffortLabel} ▾
+                    </button>
+                    {effortOpen && (
+                      <div className="effort-switcher-dropdown">
+                        {effortLevels.map(e => (
+                          <button
+                            key={e.id}
+                            className={currentEffort === e.id ? 'active' : ''}
+                            onClick={() => switchEffort(e.id)}
+                          >
+                            {e.label}
+                            {currentEffort === e.id && ' \u2713'}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               <div className="chat-header-actions">
                 <button
@@ -2775,6 +3054,11 @@
         }
       };
 
+      const codexReasoningOptions = getCodexReasoningEffortOptions(null);
+      const setCodexReasoningEffort = (reasoningEffort) => {
+        setForm(f => updateCodexReasoningEffort(f, reasoningEffort));
+      };
+
       const handlePreset = (preset) => {
         const newAgent = {
           id: `agent-${Date.now()}`,
@@ -2916,6 +3200,19 @@
                         Display the model's internal reasoning before its answer
                       </div>
                     </div>
+                    <div className="form-row">
+                      <label>Effort Level</label>
+                      <select value={form.effortLevel || ''} onChange={e => setForm(f => ({ ...f, effortLevel: e.target.value || '' }))}>
+                        <option value="">Default (high)</option>
+                        <option value="low">Low — minimal thinking, fastest</option>
+                        <option value="medium">Medium — moderate thinking</option>
+                        <option value="high">High — deep reasoning</option>
+                        <option value="max">Max — maximum effort</option>
+                      </select>
+                      <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 4 }}>
+                        Controls how much effort Claude puts into reasoning. Lower = faster &amp; cheaper, higher = more thorough.
+                      </div>
+                    </div>
                   </>
                 )}
 
@@ -2940,6 +3237,17 @@
                       </label>
                       <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 4 }}>
                         Adds --skip-git-repo-check for Codex runs in this agent's working directory.
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <label>Reasoning Effort</label>
+                      <select value={normalizeCodexReasoningEffort(form.reasoningEffort || form.effortLevel)} onChange={e => setCodexReasoningEffort(e.target.value || '')}>
+                        {codexReasoningOptions.map(option => (
+                          <option key={option.id} value={option.id}>{option.label}</option>
+                        ))}
+                      </select>
+                      <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 4 }}>
+                        Controls Codex model reasoning effort. Default uses the model's configured default.
                       </div>
                     </div>
                   </>
@@ -3121,6 +3429,17 @@
                         <input type="checkbox" checked={form.skipGitRepoCheck !== false} onChange={e => setForm(f => ({ ...f, skipGitRepoCheck: e.target.checked }))} style={{ width: 'auto' }} />
                         Skip git repository check
                       </label>
+                    </div>
+                    <div className="form-row">
+                      <label>Reasoning Effort</label>
+                      <select value={normalizeCodexReasoningEffort(form.reasoningEffort || form.effortLevel)} onChange={e => setCodexReasoningEffort(e.target.value || '')}>
+                        {codexReasoningOptions.map(option => (
+                          <option key={option.id} value={option.id}>{option.label}</option>
+                        ))}
+                      </select>
+                      <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 4 }}>
+                        Controls Codex model reasoning effort. Default uses the remote model's configured default.
+                      </div>
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 8 }}>
                       Note: Codex must be installed on the remote with either ChatGPT auth (run: codex auth) or OPENAI_API_KEY set

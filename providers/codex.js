@@ -95,20 +95,40 @@ function extractCodexResponse(output) {
   return cleaned || output.trim();
 }
 
-function buildCodexExecArgs(agent, { stdinPrompt = false, json = false } = {}) {
+function normalizeCodexReasoningEffort(agent = {}) {
+  const raw = String(agent.reasoningEffort || agent.effortLevel || '').trim();
+  if (!raw) return '';
+  if (raw === 'max') return 'xhigh';
+  if (['minimal', 'low', 'medium', 'high', 'xhigh'].includes(raw)) return raw;
+  return '';
+}
+
+function buildCodexReasoningConfig(reasoningEffort) {
+  return `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`;
+}
+
+function buildCodexExecArgs(agent, { stdinPrompt = false, json = false, resumeSession = true } = {}) {
   const args = ['exec', '--full-auto', '--color', 'never'];
+  const reasoningEffort = normalizeCodexReasoningEffort(agent);
   if (json) args.push('--json');
   if (agent.skipGitRepoCheck !== false) args.push('--skip-git-repo-check');
+  if (agent.model) args.push('--model', agent.model);
+  if (reasoningEffort) args.push('--config', buildCodexReasoningConfig(reasoningEffort));
   if (agent.codexArgs) args.push(...agent.codexArgs.split(/\s+/).filter(Boolean));
+  if (resumeSession && agent.sessionId) args.push('resume', agent.sessionId);
   if (stdinPrompt) args.push('-');
   return args;
 }
 
-function buildCodexExecShellCommand(agent, { stdinPrompt = false, json = false } = {}) {
+function buildCodexExecShellCommand(agent, { stdinPrompt = false, json = false, resumeSession = true } = {}) {
   const parts = ['codex', 'exec', '--full-auto', '--color', 'never'];
+  const reasoningEffort = normalizeCodexReasoningEffort(agent);
   if (json) parts.push('--json');
   if (agent.skipGitRepoCheck !== false) parts.push('--skip-git-repo-check');
+  if (agent.model) parts.push('--model', agent.model);
+  if (reasoningEffort) parts.push('--config', shellQuote(buildCodexReasoningConfig(reasoningEffort)));
   if (agent.codexArgs) parts.push(agent.codexArgs);
+  if (resumeSession && agent.sessionId) parts.push('resume', shellQuote(agent.sessionId));
   if (stdinPrompt) parts.push('-');
   return parts.join(' ');
 }
@@ -116,6 +136,187 @@ function buildCodexExecShellCommand(agent, { stdinPrompt = false, json = false }
 function getCodexApiKey(agent) {
   const env = getLoginEnv();
   return agent.apiKey || env.CODEX_API_KEY || env.OPENAI_API_KEY || process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY || '';
+}
+
+function formatCodexModelLabel(id, displayName) {
+  const raw = String(displayName || id || '').trim();
+  if (!raw) return '';
+  if (raw !== id && raw.includes(' ')) return raw;
+
+  const parts = raw.split('-');
+  const formatPart = (part) => {
+    if (/^o\d/i.test(part)) return part.toUpperCase();
+    if (/^\d/.test(part)) return part;
+    return part.charAt(0).toUpperCase() + part.slice(1);
+  };
+
+  if (/^gpt$/i.test(parts[0]) && parts[1]) {
+    return [`GPT-${parts[1]}`, ...parts.slice(2).map(formatPart)].join(' ');
+  }
+
+  return parts.map(formatPart).join(' ');
+}
+
+function parseCodexConfiguredModel(configText) {
+  const topLevelConfig = String(configText || '').split(/\n\s*\[/)[0];
+  const match = topLevelConfig.match(/^\s*model\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s#]+))/m);
+  return (match?.[1] || match?.[2] || match?.[3] || '').trim();
+}
+
+function normalizeCodexModelCache(cache) {
+  const rawModels = Array.isArray(cache?.models) ? cache.models : [];
+  return rawModels
+    .map((model, index) => ({ model, index }))
+    .filter(({ model }) =>
+      model &&
+      typeof model.slug === 'string' &&
+      model.slug.trim() &&
+      (model.visibility === undefined || model.visibility === 'list')
+    )
+    .sort((a, b) => {
+      const aPriority = Number.isFinite(Number(a.model.priority)) ? Number(a.model.priority) : Number.MAX_SAFE_INTEGER;
+      const bPriority = Number.isFinite(Number(b.model.priority)) ? Number(b.model.priority) : Number.MAX_SAFE_INTEGER;
+      if (aPriority !== bPriority) return aPriority - bPriority;
+      return a.index - b.index;
+    })
+    .map(({ model }) => ({
+      id: model.slug,
+      label: formatCodexModelLabel(model.slug, model.display_name),
+      description: model.description || '',
+      defaultReasoningLevel: model.default_reasoning_level || '',
+      supportedReasoningLevels: Array.isArray(model.supported_reasoning_levels)
+        ? model.supported_reasoning_levels.map(level => level?.effort).filter(Boolean)
+        : [],
+      supportedInApi: model.supported_in_api !== false,
+    }));
+}
+
+function normalizeOpenAIModelList(rawModels) {
+  const excluded = /(embedding|image|audio|tts|transcribe|whisper|moderation|search|realtime|dall-e|davinci|babbage)/i;
+  const likelyChatModel = /^(gpt|o\d|chatgpt|codex)/i;
+  return (Array.isArray(rawModels) ? rawModels : [])
+    .filter(model => typeof model?.id === 'string' && likelyChatModel.test(model.id) && !excluded.test(model.id))
+    .sort((a, b) => (Number(b.created) || 0) - (Number(a.created) || 0) || a.id.localeCompare(b.id))
+    .map(model => ({
+      id: model.id,
+      label: formatCodexModelLabel(model.id, model.id),
+      description: '',
+      defaultReasoningLevel: '',
+      supportedReasoningLevels: [],
+      supportedInApi: true,
+    }));
+}
+
+function pickDefaultCodexModel(models, configuredModel) {
+  if (configuredModel && models.some(model => model.id === configuredModel)) return configuredModel;
+  return models[0]?.id || configuredModel || '';
+}
+
+function readLocalCodexFile(fileName) {
+  try {
+    const filePath = path.join(os.homedir(), '.codex', fileName);
+    if (fs.existsSync(filePath)) return fs.readFileSync(filePath, 'utf8');
+  } catch {
+    // Ignore local cache read failures and fall back below.
+  }
+  return '';
+}
+
+function extractMarkedSection(text, startMarker, endMarker) {
+  const start = text.indexOf(startMarker);
+  if (start < 0) return '';
+  const contentStart = start + startMarker.length;
+  const end = text.indexOf(endMarker, contentStart);
+  if (end < 0) return '';
+  return text.slice(contentStart, end).trim();
+}
+
+async function listCodexModelsLocal(agent = {}) {
+  const configText = readLocalCodexFile('config.toml');
+  const configuredModel = parseCodexConfiguredModel(configText);
+  const cacheText = readLocalCodexFile('models_cache.json');
+
+  if (cacheText) {
+    try {
+      const cache = JSON.parse(cacheText);
+      const models = normalizeCodexModelCache(cache);
+      if (models.length) {
+        return {
+          models,
+          defaultModel: pickDefaultCodexModel(models, configuredModel),
+          source: 'codex-cache',
+          fetchedAt: cache.fetched_at || null,
+        };
+      }
+    } catch {
+      // If Codex's cache is unreadable, try the API-key path below.
+    }
+  }
+
+  const apiKey = getCodexApiKey(agent);
+  if (apiKey) {
+    try {
+      const openai = await getOpenAISDK(apiKey);
+      const response = await openai.models.list();
+      const models = normalizeOpenAIModelList(response.data);
+      return {
+        models,
+        defaultModel: pickDefaultCodexModel(models, configuredModel),
+        source: 'openai-api',
+        fetchedAt: null,
+        ...(models.length ? {} : { error: 'No compatible OpenAI models were returned for this account.' }),
+      };
+    } catch (err) {
+      return { models: [], defaultModel: configuredModel, source: 'openai-api', error: err.message };
+    }
+  }
+
+  return {
+    models: [],
+    defaultModel: configuredModel,
+    source: 'none',
+    error: 'No Codex model cache found. Open Codex once to refresh available models, or set OPENAI_API_KEY.',
+  };
+}
+
+async function listCodexModelsSSH(agent = {}) {
+  if (!agent.sshHost) {
+    return { models: [], defaultModel: '', source: 'none', error: 'SSH host is required to list remote Codex models.' };
+  }
+
+  const command = [
+    "if test -f ~/.codex/config.toml; then printf '__CODEX_CONFIG_BEGIN__\\n'; cat ~/.codex/config.toml; printf '\\n__CODEX_CONFIG_END__\\n'; fi",
+    "if test -f ~/.codex/models_cache.json; then printf '__CODEX_MODELS_BEGIN__\\n'; cat ~/.codex/models_cache.json; printf '\\n__CODEX_MODELS_END__\\n'; fi",
+  ].join('; ');
+
+  try {
+    const output = await runSSHCommand(agent, command, 15000);
+    const configText = extractMarkedSection(output, '__CODEX_CONFIG_BEGIN__', '__CODEX_CONFIG_END__');
+    const cacheText = extractMarkedSection(output, '__CODEX_MODELS_BEGIN__', '__CODEX_MODELS_END__');
+    const configuredModel = parseCodexConfiguredModel(configText);
+
+    if (cacheText) {
+      const cache = JSON.parse(cacheText);
+      const models = normalizeCodexModelCache(cache);
+      if (models.length) {
+        return {
+          models,
+          defaultModel: pickDefaultCodexModel(models, configuredModel),
+          source: 'codex-cache',
+          fetchedAt: cache.fetched_at || null,
+        };
+      }
+    }
+
+    return {
+      models: [],
+      defaultModel: configuredModel,
+      source: 'none',
+      error: 'No Codex model cache found on the remote. Run Codex on that host once to refresh available models.',
+    };
+  } catch (err) {
+    return { models: [], defaultModel: '', source: 'ssh', error: err.message };
+  }
 }
 
 function buildCodexSDKOptions(agent, apiKey) {
@@ -134,6 +335,7 @@ function buildCodexSDKOptions(agent, apiKey) {
 }
 
 function buildCodexThreadOptions(agent) {
+  const reasoningEffort = normalizeCodexReasoningEffort(agent);
   const options = {
     sandboxMode: agent.sandboxMode || 'workspace-write',
     workingDirectory: expandHomeDir(agent.workDir) || process.env.HOME,
@@ -142,7 +344,8 @@ function buildCodexThreadOptions(agent) {
     webSearchEnabled: !!agent.webSearchEnabled,
   };
 
-  if (agent.reasoningEffort) options.modelReasoningEffort = agent.reasoningEffort;
+  if (agent.model) options.model = agent.model;
+  if (reasoningEffort) options.modelReasoningEffort = reasoningEffort;
   if (typeof agent.networkAccessEnabled === 'boolean') options.networkAccessEnabled = agent.networkAccessEnabled;
   if (Array.isArray(agent.additionalDirectories)) options.additionalDirectories = agent.additionalDirectories.map(expandHomeDir);
   return options;
@@ -325,7 +528,7 @@ async function streamCodexWithAgentsSDK(event, requestId, agent, userMsg, prompt
 
   const codexAgent = new Agent({
     name: agent.name || 'Codex',
-    model: agent.agentModel || 'gpt-5.4',
+    model: agent.agentModel || undefined,
     instructions: [
       agent.systemPrompt || '',
       'For every user request, call the codex tool exactly once with one text input containing the request. Do not answer directly unless the tool is unavailable.',
@@ -549,6 +752,9 @@ async function streamCodexLocal(event, requestId, agent, messages) {
   if (apiKey && agent.useSDK !== false) {
     try {
       const openai = await getOpenAISDK(apiKey);
+      const model = agent.model || (await listCodexModelsLocal(agent)).defaultModel;
+      if (!model) throw new Error('No Codex model selected and model discovery returned no default.');
+      const reasoningEffort = normalizeCodexReasoningEffort(agent);
 
       // Build proper messages array for OpenAI
       const formattedMessages = messages.map(m => ({
@@ -556,13 +762,16 @@ async function streamCodexLocal(event, requestId, agent, messages) {
         content: m.content
       }));
 
-      const stream = await openai.chat.completions.create({
-        model: 'gpt-4o',
+      const request = {
+        model,
         messages: formattedMessages,
         max_tokens: agent.maxTokens || 16384,
         temperature: agent.temperature ?? 0.7,
         stream: true,
-      });
+      };
+      if (reasoningEffort) request.reasoning_effort = reasoningEffort;
+
+      const stream = await openai.chat.completions.create(request);
 
       // Handle abortions
       const abortController = new AbortController();
@@ -704,6 +913,9 @@ async function chatCodexLocal(agent, messages) {
   if (apiKey && agent.useSDK !== false) {
     try {
       const openai = await getOpenAISDK(apiKey);
+      const model = agent.model || (await listCodexModelsLocal(agent)).defaultModel;
+      if (!model) throw new Error('No Codex model selected and model discovery returned no default.');
+      const reasoningEffort = normalizeCodexReasoningEffort(agent);
 
       // Build proper messages array for OpenAI
       const formattedMessages = messages.map(m => ({
@@ -711,12 +923,15 @@ async function chatCodexLocal(agent, messages) {
         content: m.content
       }));
 
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o',
+      const request = {
+        model,
         messages: formattedMessages,
         max_tokens: agent.maxTokens || 16384,
         temperature: agent.temperature ?? 0.7,
-      });
+      };
+      if (reasoningEffort) request.reasoning_effort = reasoningEffort;
+
+      const completion = await openai.chat.completions.create(request);
 
       const msg = completion.choices?.[0]?.message;
       return {
@@ -801,6 +1016,7 @@ async function pingCodexLocal(agent) {
     error: 'Codex needs authentication. Run "codex auth" to login with ChatGPT or set OPENAI_API_KEY.'
   };
 }
+
 
 // ── SSH entry points ──
 
@@ -1002,7 +1218,9 @@ module.exports = {
   chatCodexLocal,
   streamCodexLocal,
   pingCodexLocal,
+  listCodexModelsLocal,
   chatCodexSSH,
   streamCodexSSH,
   pingCodexSSH,
+  listCodexModelsSSH,
 };
