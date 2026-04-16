@@ -399,6 +399,27 @@
     .model-switcher-dropdown button.active { color: var(--accent); font-weight: 600; }
     .model-switcher-dropdown button:disabled { cursor: default; opacity: 0.65; }
     .model-switcher-dropdown button:disabled:hover { background: none; color: var(--text-1); }
+
+    /* ── Effort Switcher ── */
+    .effort-switcher { position: relative; display: inline-flex; }
+    .effort-switcher-btn {
+      background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+      color: var(--text-1); font-size: 10px; padding: 2px 8px; cursor: pointer;
+      display: flex; align-items: center; gap: 4px; transition: var(--transition);
+    }
+    .effort-switcher-btn:hover { background: var(--bg-3); color: var(--text-0); }
+    .effort-switcher-dropdown {
+      position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+      margin-top: 4px; background: var(--bg-1); border: 1px solid var(--border);
+      border-radius: var(--radius); box-shadow: var(--shadow-md);
+      min-width: 160px; z-index: 100; overflow: hidden;
+    }
+    .effort-switcher-dropdown button {
+      width: 100%; text-align: left; padding: 8px 12px; background: none;
+      border: none; color: var(--text-1); font-size: 12px; cursor: pointer;
+    }
+    .effort-switcher-dropdown button:hover { background: var(--accent-subtle); color: var(--text-0); }
+    .effort-switcher-dropdown button.active { color: var(--accent); font-weight: 600; }
     .model-switcher-note {
       padding: 8px 12px;
       color: var(--text-2);
@@ -2030,6 +2051,7 @@
       const [selectedImages, setSelectedImages] = useState([]);
       const [isDragging, setIsDragging] = useState(false);
       const [modelOpen, setModelOpen] = useState(false);
+      const [effortOpen, setEffortOpen] = useState(false);
       const [codexModels, setCodexModels] = useState([]);
       const [codexDefaultModel, setCodexDefaultModel] = useState('');
       const [modelLoadState, setModelLoadState] = useState('idle');
@@ -2044,14 +2066,16 @@
       const activeRequestIdRef = useRef(null);
       const alwaysAllowedToolsRef = useRef(new Set());
       const modelRef = useRef(null);
+      const effortRef = useRef(null);
       const isClaudeProvider = isClaudeCodeProvider(agent.provider);
       const isCodexAgent = isCodexProvider(agent.provider);
       const hasModelPicker = isClaudeProvider || isCodexAgent;
 
-      // Close model dropdown on outside click
+      // Close model/effort dropdowns on outside click
       useEffect(() => {
         const handler = (e) => {
           if (modelRef.current && !modelRef.current.contains(e.target)) setModelOpen(false);
+          if (effortRef.current && !effortRef.current.contains(e.target)) setEffortOpen(false);
         };
         document.addEventListener('mousedown', handler);
         return () => document.removeEventListener('mousedown', handler);
@@ -2110,6 +2134,21 @@
       const switchModel = (modelId) => {
         onUpdateAgent({ ...agent, model: modelId });
         setModelOpen(false);
+      };
+
+      const effortLevels = [
+        { id: '', label: 'Default' },
+        { id: 'low', label: 'Low' },
+        { id: 'medium', label: 'Medium' },
+        { id: 'high', label: 'High' },
+        { id: 'max', label: 'Max' },
+      ];
+      const currentEffort = agent.effortLevel || '';
+      const currentEffortLabel = effortLevels.find(e => e.id === currentEffort)?.label || 'Default';
+
+      const switchEffort = (effortId) => {
+        onUpdateAgent({ ...agent, effortLevel: effortId });
+        setEffortOpen(false);
       };
 
       // Keep refs to the latest agent/isActive so stream callbacks never use a stale closure
@@ -2724,6 +2763,27 @@
                     )}
                   </div>
                 )}
+                {isClaudeProvider && (
+                  <div className="effort-switcher" ref={effortRef} style={{ marginTop: 2 }}>
+                    <button className="effort-switcher-btn" onClick={() => setEffortOpen(o => !o)}>
+                      Effort: {currentEffortLabel} ▾
+                    </button>
+                    {effortOpen && (
+                      <div className="effort-switcher-dropdown">
+                        {effortLevels.map(e => (
+                          <button
+                            key={e.id}
+                            className={currentEffort === e.id ? 'active' : ''}
+                            onClick={() => switchEffort(e.id)}
+                          >
+                            {e.label}
+                            {currentEffort === e.id && ' \u2713'}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               <div className="chat-header-actions">
                 <button
@@ -3086,6 +3146,19 @@
                       </label>
                       <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 4 }}>
                         Display the model's internal reasoning before its answer
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <label>Effort Level</label>
+                      <select value={form.effortLevel || ''} onChange={e => setForm(f => ({ ...f, effortLevel: e.target.value || '' }))}>
+                        <option value="">Default (high)</option>
+                        <option value="low">Low — minimal thinking, fastest</option>
+                        <option value="medium">Medium — moderate thinking</option>
+                        <option value="high">High — deep reasoning</option>
+                        <option value="max">Max — maximum effort</option>
+                      </select>
+                      <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 4 }}>
+                        Controls how much effort Claude puts into reasoning. Lower = faster &amp; cheaper, higher = more thorough.
                       </div>
                     </div>
                   </>

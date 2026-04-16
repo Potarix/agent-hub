@@ -294,6 +294,7 @@ function buildSDKOptions(agent) {
 
   if (agent.model) options.model = agent.model;
   if (agent.systemPrompt) options.systemPrompt = agent.systemPrompt;
+  if (agent.effortLevel) options.effort = agent.effortLevel;
 
   // Permission mode
   const perm = agent.permissionMode || 'default';
@@ -540,6 +541,7 @@ function buildCLIArgs(agent, extra = []) {
   const args = ['-p'];
 
   if (agent.model) args.push('--model', agent.model);
+  if (agent.effortLevel) args.push('--effort', agent.effortLevel);
 
   const perm = agent.permissionMode || 'default';
   if (perm === 'bypassPermissions') {
@@ -844,6 +846,7 @@ async function chatClaudeCodeSSH(agent, messages) {
 
   let cmd = `cd ${workDir} && claude -p --output-format json`;
   if (agent.model) cmd += ` --model '${agent.model}'`;
+  if (agent.effortLevel) cmd += ` --effort '${agent.effortLevel}'`;
 
   if (agent.sessionId) {
     cmd += ` --resume '${agent.sessionId}'`;
@@ -927,6 +930,7 @@ async function streamClaudeCodeSSH(event, requestId, agent, messages) {
 
   let cmd = `cd ${workDir} && claude -p --output-format stream-json --verbose --include-partial-messages`;
   if (agent.model) cmd += ` --model '${agent.model}'`;
+  if (agent.effortLevel) cmd += ` --effort '${agent.effortLevel}'`;
 
   if (agent.sessionId) {
     cmd += ` --resume '${agent.sessionId}'`;
