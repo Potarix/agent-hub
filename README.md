@@ -66,73 +66,9 @@ When you launch Agent Hub, you can add agents by clicking the "+" button and con
 #### OpenClaw
 - Requires OpenClaw CLI (`openclaw`)
 
-## 🏗️ Architecture
-
-```
-agent-hub/
-├── main.js              # Electron main process
-├── index.html           # React UI (single file)
-├── preload.js           # Electron preload script
-├── providers/           # AI provider implementations
-│   ├── claude-code.js   # Claude Code SDK integration
-│   ├── openai-compat.js # OpenAI API integration
-│   ├── codex.js         # Codex provider
-│   ├── hermes.js        # Hermes provider
-│   └── openclaw.js      # OpenClaw provider
-├── lib/                 # Utility modules
-│   ├── state.js         # Application state management
-│   ├── http.js          # HTTP utilities
-│   └── ssh.js           # SSH connection handling
-├── auth.js              # Authentication handlers
-└── slash-commands.js    # Command processing
-```
-
-### Key Technologies
-- **Electron**: Desktop application framework
-- **React**: UI components (loaded via CDN)
-- **Node.js**: Backend runtime
-- **IPC**: Inter-process communication for main/renderer
-
-## 🛠️ Development
-
-### Running in Development Mode
-```bash
-npm run dev
-```
-This enables developer tools and hot reload.
-
-### Project Structure
-- **Main Process** (`main.js`): Handles system operations, provider communication
-- **Renderer Process** (`index.html`): React-based UI
-- **Providers**: Modular architecture for easy provider addition
-- **IPC Handlers**: Secure communication between processes
-
-### Adding New Providers
-1. Create provider file in `providers/`
-2. Implement required methods:
-   - `chat()` or `stream()`
-   - `ping()` for health checks
-3. Register in `main.js` IPC handlers
-4. Add UI support in `index.html`
-
 ## 📝 License
 
 MIT License - see LICENSE file for details
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-## 🔗 Links
-
-- [Issue Tracker](https://github.com/OmarDadabhoy/agenthub/issues)
-- [Documentation](https://github.com/OmarDadabhoy/agenthub/wiki)
 
 ## 👥 Author
 
