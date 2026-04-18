@@ -8,6 +8,16 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://unpkg.com/marked@14/marked.min.js"></script>
+  <link rel="stylesheet" href="./node_modules/xterm/css/xterm.css" />
+  <script>
+    // Ensure xterm UMD loads as browser globals (not CJS) even if Electron leaks module/exports
+    if (typeof module !== 'undefined') { window.__nodeModule = module; window.__nodeExports = exports; module = undefined; exports = undefined; }
+  </script>
+  <script src="./node_modules/xterm/lib/xterm.js"></script>
+  <script src="./node_modules/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
+  <script>
+    if (window.__nodeModule) { module = window.__nodeModule; exports = window.__nodeExports; delete window.__nodeModule; delete window.__nodeExports; }
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
@@ -1022,6 +1032,94 @@
     .btn-attach:hover { background: var(--border-light); color: var(--text-1); }
     .btn-attach:active { opacity: 0.8; }
 
+    /* ── Terminal (xterm.js) ── */
+    .xterm-wrapper {
+      flex: 1;
+      min-height: 0;
+      padding: 0;
+      position: relative;
+      overflow: hidden;
+    }
+    .xterm-wrapper .xterm {
+      height: 100%;
+      padding: 8px 4px 8px 12px;
+    }
+    .xterm-wrapper .xterm-viewport {
+      border-radius: 0;
+    }
+    .terminal-topbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      background: var(--bg-1);
+      border-bottom: 1px solid var(--border);
+      -webkit-app-region: drag;
+      user-select: none;
+      min-height: 44px;
+    }
+    .terminal-topbar-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-0);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .terminal-topbar-subtitle {
+      font-size: 11px;
+      color: var(--text-2);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .terminal-topbar-actions {
+      margin-left: auto;
+      display: flex;
+      gap: 6px;
+      -webkit-app-region: no-drag;
+    }
+    .terminal-topbar-actions button {
+      background: var(--bg-3);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-1);
+      font-size: 11px;
+      padding: 3px 10px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .terminal-topbar-actions button:hover {
+      background: var(--bg-4);
+      color: var(--text-0);
+    }
+    .terminal-status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .terminal-status-dot.online { background: var(--green); box-shadow: 0 0 4px var(--green); }
+    .terminal-status-dot.offline { background: var(--text-2); }
+    .terminal-status-dot.checking { background: var(--orange); animation: pulse 1s infinite; }
+    .terminal-exited-banner {
+      text-align: center;
+      padding: 8px;
+      font-size: 12px;
+      color: var(--text-2);
+      background: var(--bg-1);
+      border-top: 1px solid var(--border);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .terminal-exited-banner button {
+      margin-left: 8px;
+      background: var(--accent);
+      border: none;
+      border-radius: 6px;
+      color: #fff;
+      font-size: 11px;
+      padding: 3px 12px;
+      cursor: pointer;
+    }
+
     .selected-images {
       display: flex;
       gap: 8px;
@@ -1248,6 +1346,7 @@
     .provider-claude-code { background: #FFCC00; color: #000; }
     .provider-hermes { background: #AF52DE; color: white; }
     .provider-codex { background: #34C759; color: white; }
+    .provider-terminal { background: #1a1a2e; color: #00ff41; border: 1px solid #00ff41; }
     .provider-generic { background: #007AFF; color: white; }
 
     /* ── Slash Command Palette ── */
@@ -1613,7 +1712,10 @@
         window.agentHub.onThemeChange(isDark => {
           setTheme(isDark ? 'dark' : 'light');
         });
-        return () => window.agentHub.removeStreamListeners?.();
+        return () => {
+          window.agentHub.removeStreamListeners?.();
+          window.agentHub.removeTerminalListeners?.();
+        };
       }, []);
 
       useEffect(() => {
@@ -1687,25 +1789,33 @@
               )}
               {agents.map(ag => (
                 <div key={ag.id} style={{ display: activeId === ag.id ? 'contents' : 'none' }}>
-                  <ChatView
-                    agent={ag}
-                    isActive={activeId === ag.id}
-                    status={statuses[ag.id]}
-                    messages={chats[ag.id] || []}
-                    setMessages={(msgs) => setChats(prev => ({ ...prev, [ag.id]: typeof msgs === 'function' ? msgs(prev[ag.id] || []) : msgs }))}
-                    onUpdateAgent={updateAgent}
-                    completionStatus={completionStatus[ag.id]}
-                    setCompletionStatus={(status) => setCompletionStatus(prev => ({ ...prev, [ag.id]: typeof status === 'function' ? status(prev[ag.id]) : status }))}
-                    onLoadingChange={(isLoading) => {
-                      setLoadingAgents(prev => {
-                        const next = new Set(prev);
-                        if (isLoading) next.add(ag.id);
-                        else next.delete(ag.id);
-                        return next;
-                      });
-                    }}
-                    setLastActivityTime={setLastActivityTime}
-                  />
+                  {isTerminalProvider(ag.provider) ? (
+                    <TerminalView
+                      agent={ag}
+                      isActive={activeId === ag.id}
+                      status={statuses[ag.id]}
+                    />
+                  ) : (
+                    <ChatView
+                      agent={ag}
+                      isActive={activeId === ag.id}
+                      status={statuses[ag.id]}
+                      messages={chats[ag.id] || []}
+                      setMessages={(msgs) => setChats(prev => ({ ...prev, [ag.id]: typeof msgs === 'function' ? msgs(prev[ag.id] || []) : msgs }))}
+                      onUpdateAgent={updateAgent}
+                      completionStatus={completionStatus[ag.id]}
+                      setCompletionStatus={(status) => setCompletionStatus(prev => ({ ...prev, [ag.id]: typeof status === 'function' ? status(prev[ag.id]) : status }))}
+                      onLoadingChange={(isLoading) => {
+                        setLoadingAgents(prev => {
+                          const next = new Set(prev);
+                          if (isLoading) next.add(ag.id);
+                          else next.delete(ag.id);
+                          return next;
+                        });
+                      }}
+                      setLastActivityTime={setLastActivityTime}
+                    />
+                  )}
                 </div>
               ))}
             </div>
@@ -1756,6 +1866,10 @@
 
     function isCodexProvider(provider) {
       return provider === 'codex' || provider === 'codex-ssh';
+    }
+
+    function isTerminalProvider(provider) {
+      return provider === 'terminal' || provider === 'terminal-ssh';
     }
 
     function formatModelLabel(modelId) {
@@ -1850,7 +1964,7 @@
                       )}
                     </div>
                     <div className="agent-provider">
-                      {agent.provider === 'claude-code' ? 'Claude Code' : agent.provider === 'claude-code-ssh' ? 'Claude Code SSH' : agent.provider === 'openclaw-local' ? 'OpenClaw Local' : agent.provider === 'openclaw' ? 'OpenClaw' : agent.provider === 'hermes-local' ? 'Hermes Local' : agent.provider === 'hermes' ? 'Hermes SSH' : agent.provider === 'codex' ? 'Codex' : agent.provider === 'codex-ssh' ? 'Codex SSH' : agent.provider === 'openai-compat' ? 'OpenAI Compat' : agent.provider}
+                      {agent.provider === 'claude-code' ? 'Claude Code' : agent.provider === 'claude-code-ssh' ? 'Claude Code SSH' : agent.provider === 'openclaw-local' ? 'OpenClaw Local' : agent.provider === 'openclaw' ? 'OpenClaw' : agent.provider === 'hermes-local' ? 'Hermes Local' : agent.provider === 'hermes' ? 'Hermes SSH' : agent.provider === 'codex' ? 'Codex' : agent.provider === 'codex-ssh' ? 'Codex SSH' : agent.provider === 'terminal' ? 'Terminal' : agent.provider === 'terminal-ssh' ? 'Terminal SSH' : agent.provider === 'openai-compat' ? 'OpenAI Compat' : agent.provider}
                       {agent.model ? ` / ${(getStaticModelAliases(agent.provider).find(m => m.id === agent.model) || {}).label || formatModelLabel(agent.model) || agent.model}` : ''}
                     </div>
                   </div>
@@ -2999,6 +3113,206 @@
       );
     }
 
+    // ── Terminal View (xterm.js) ──
+    function TerminalView({ agent, isActive, status }) {
+      const containerRef = useRef(null);
+      const xtermRef = useRef(null);
+      const fitAddonRef = useRef(null);
+      const spawnedRef = useRef(false);
+      const openedRef = useRef(false);
+      const [exited, setExited] = useState(false);
+
+      const isDark = () => document.documentElement.classList.contains('dark') || window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+      const darkTheme = {
+        background: '#0a0a0f',
+        foreground: '#e0e0e0',
+        cursor: '#7c6aff',
+        cursorAccent: '#0a0a0f',
+        selectionBackground: 'rgba(124,106,255,0.3)',
+        selectionForeground: '#ffffff',
+        black: '#1a1a2e',
+        red: '#ff6b6b',
+        green: '#51cf66',
+        yellow: '#ffd43b',
+        blue: '#74b0ff',
+        magenta: '#cc5de8',
+        cyan: '#22b8cf',
+        white: '#e0e0e0',
+        brightBlack: '#555577',
+        brightRed: '#ff8787',
+        brightGreen: '#69db7c',
+        brightYellow: '#ffe066',
+        brightBlue: '#91c4ff',
+        brightMagenta: '#da77f2',
+        brightCyan: '#3bc9db',
+        brightWhite: '#ffffff',
+      };
+
+      const lightTheme = {
+        background: '#f5f5f7',
+        foreground: '#1a1a2e',
+        cursor: '#7c6aff',
+        cursorAccent: '#ffffff',
+        selectionBackground: 'rgba(124,106,255,0.2)',
+        selectionForeground: '#000000',
+        black: '#1a1a2e',
+        red: '#d63031',
+        green: '#00b894',
+        yellow: '#cc8800',
+        blue: '#0A84FF',
+        magenta: '#a855f7',
+        cyan: '#0891b2',
+        white: '#d0d0d0',
+        brightBlack: '#7f8c8d',
+        brightRed: '#e74c3c',
+        brightGreen: '#2ecc71',
+        brightYellow: '#f39c12',
+        brightBlue: '#3498db',
+        brightMagenta: '#9b59b6',
+        brightCyan: '#1abc9c',
+        brightWhite: '#2d3436',
+      };
+
+      // Create xterm and spawn PTY
+      useEffect(() => {
+        const term = new Terminal({
+          cursorBlink: true,
+          cursorStyle: 'bar',
+          fontSize: 14,
+          fontFamily: "'JetBrains Mono', 'SF Mono', 'Menlo', 'Monaco', monospace",
+          fontWeight: 400,
+          lineHeight: 1.2,
+          letterSpacing: 0,
+          theme: isDark() ? darkTheme : lightTheme,
+          allowProposedApi: true,
+          scrollback: 10000,
+          macOptionIsMeta: true,
+          macOptionClickForcesSelection: true,
+        });
+        const fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+        xtermRef.current = term;
+        fitAddonRef.current = fitAddon;
+
+        // Listen for theme changes
+        const onTheme = (dark) => {
+          term.options.theme = dark ? darkTheme : lightTheme;
+        };
+        window.agentHub.onThemeChange(onTheme);
+
+        // Send keystrokes to backend
+        term.onData(data => {
+          window.agentHub.terminalInput(agent.id, data);
+        });
+
+        // Receive output from PTY
+        const offData = window.agentHub.onTerminalData((id, data) => {
+          if (id === agent.id) term.write(data);
+        });
+
+        // Handle PTY exit
+        const offExit = window.agentHub.onTerminalExit((id, code) => {
+          if (id === agent.id) {
+            term.write(`\r\n\x1b[90m[Process exited with code ${code}]\x1b[0m\r\n`);
+            setExited(true);
+            spawnedRef.current = false;
+          }
+        });
+
+        return () => {
+          offData();
+          offExit();
+          term.dispose();
+          xtermRef.current = null;
+          fitAddonRef.current = null;
+          // Kill PTY on unmount
+          window.agentHub.terminalKill(agent.id);
+        };
+      }, [agent.id]);
+
+      // Open + spawn when first activated (container must be visible for dimensions)
+      useEffect(() => {
+        if (!isActive || !xtermRef.current || !containerRef.current) return;
+
+        if (!openedRef.current) {
+          xtermRef.current.open(containerRef.current);
+          fitAddonRef.current.fit();
+          openedRef.current = true;
+        }
+
+        if (!spawnedRef.current) {
+          spawnedRef.current = true;
+          setExited(false);
+          window.agentHub.terminalSpawn(agent).then(() => {
+            const dims = fitAddonRef.current.proposeDimensions();
+            if (dims) window.agentHub.terminalResize(agent.id, dims.cols, dims.rows);
+          });
+        }
+
+        // Fit and focus
+        setTimeout(() => {
+          fitAddonRef.current?.fit();
+          xtermRef.current?.focus();
+        }, 30);
+      }, [isActive]);
+
+      // Handle window resize
+      useEffect(() => {
+        const onResize = () => {
+          if (!isActive || !fitAddonRef.current) return;
+          fitAddonRef.current.fit();
+          const dims = fitAddonRef.current.proposeDimensions();
+          if (dims) window.agentHub.terminalResize(agent.id, dims.cols, dims.rows);
+        };
+        window.addEventListener('resize', onResize);
+        return () => window.removeEventListener('resize', onResize);
+      }, [isActive, agent.id]);
+
+      const handleRestart = () => {
+        if (xtermRef.current) {
+          xtermRef.current.clear();
+          xtermRef.current.reset();
+        }
+        setExited(false);
+        spawnedRef.current = true;
+        window.agentHub.terminalSpawn(agent).then(() => {
+          const dims = fitAddonRef.current?.proposeDimensions();
+          if (dims) window.agentHub.terminalResize(agent.id, dims.cols, dims.rows);
+          xtermRef.current?.focus();
+        });
+      };
+
+      return (
+        <>
+          <div className="terminal-topbar">
+            <div className="terminal-topbar-title">
+              <span className={`terminal-status-dot ${status || 'offline'}`} />
+              {agent.name}
+            </div>
+            <span className="terminal-topbar-subtitle">
+              {agent.provider === 'terminal-ssh'
+                ? `${agent.sshUser || 'root'}@${agent.sshHost || '...'}`
+                : 'local'}
+            </span>
+            <div className="terminal-topbar-actions">
+              <button onClick={() => { xtermRef.current?.clear(); xtermRef.current?.focus(); }}>Clear</button>
+              <button onClick={handleRestart}>Restart</button>
+            </div>
+          </div>
+          <div className="xterm-wrapper" ref={containerRef}
+            onClick={() => xtermRef.current?.focus()}
+          />
+          {exited && (
+            <div className="terminal-exited-banner">
+              Shell exited
+              <button onClick={handleRestart}>Restart</button>
+            </div>
+          )}
+        </>
+      );
+    }
+
     // ── Agent Presets ──
     const PRESETS = [
       { name: 'Claude Code (Local)', emoji: 'CC', provider: 'claude-code', model: '', workDir: '', providerClass: 'provider-claude-code', desc: 'Local Claude Code CLI instance' },
@@ -3009,6 +3323,8 @@
       { name: 'Hermes (SSH)', emoji: 'H', provider: 'hermes', sshHost: '', sshUser: 'root', model: '', providerClass: 'provider-hermes', desc: 'Hermes on a remote VPS' },
       { name: 'Codex (Local)', emoji: 'CX', provider: 'codex', model: '', skipGitRepoCheck: true, providerClass: 'provider-codex', desc: 'Local OpenAI Codex CLI agent' },
       { name: 'Codex (SSH)', emoji: 'CX', provider: 'codex-ssh', sshHost: '', sshUser: 'root', model: '', skipGitRepoCheck: true, providerClass: 'provider-codex', desc: 'Codex on a remote server' },
+      { name: 'Terminal (Local)', emoji: '>', provider: 'terminal', workDir: '', providerClass: 'provider-terminal', desc: 'Local shell terminal' },
+      { name: 'Terminal (SSH)', emoji: '>', provider: 'terminal-ssh', sshHost: '', sshUser: 'root', providerClass: 'provider-terminal', desc: 'SSH remote terminal' },
     ];
 
     // ── Settings Modal ──
@@ -3032,6 +3348,8 @@
         'openai': 'provider-openai',
         'codex': 'provider-codex',
         'codex-ssh': 'provider-codex',
+        'terminal': 'provider-terminal',
+        'terminal-ssh': 'provider-terminal',
       };
 
       const handleSave = () => {
@@ -3145,6 +3463,8 @@
                     <option value="hermes">Hermes (SSH)</option>
                     <option value="codex">Codex (Local)</option>
                     <option value="codex-ssh">Codex (SSH)</option>
+                    <option value="terminal">Terminal (Local)</option>
+                    <option value="terminal-ssh">Terminal (SSH)</option>
                     <option value="openai-compat">OpenAI Compatible (vLLM, etc.)</option>
                   </select>
                 </div>
@@ -3447,6 +3767,45 @@
                   </>
                 )}
 
+                {form.provider === 'terminal' && (
+                  <>
+                    <div className="form-row">
+                      <label>Starting Directory</label>
+                      <input value={form.workDir || ''} onChange={e => setForm(f => ({ ...f, workDir: e.target.value }))} placeholder="e.g. ~/projects (blank = home dir)" />
+                      <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 4 }}>
+                        The terminal will start in this directory
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {form.provider === 'terminal-ssh' && (
+                  <>
+                    <div className="form-row">
+                      <label>SSH Host</label>
+                      <input value={form.sshHost || ''} onChange={e => setForm(f => ({ ...f, sshHost: e.target.value }))} placeholder="your-server.com or IP address" />
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <div className="form-row" style={{ flex: 1 }}>
+                        <label>SSH User</label>
+                        <input value={form.sshUser || ''} onChange={e => setForm(f => ({ ...f, sshUser: e.target.value }))} placeholder="root" />
+                      </div>
+                      <div className="form-row" style={{ flex: 1 }}>
+                        <label>SSH Port</label>
+                        <input type="number" value={form.sshPort || 22} onChange={e => setForm(f => ({ ...f, sshPort: parseInt(e.target.value) || 22 }))} />
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <label>SSH Key Path (optional)</label>
+                      <input value={form.sshKey || ''} onChange={e => setForm(f => ({ ...f, sshKey: e.target.value }))} placeholder="~/.ssh/id_rsa (blank = default key)" />
+                    </div>
+                    <div className="form-row">
+                      <label>Starting Directory on Remote</label>
+                      <input value={form.workDir || ''} onChange={e => setForm(f => ({ ...f, workDir: e.target.value }))} placeholder="e.g. /root/projects (blank = home dir)" />
+                    </div>
+                  </>
+                )}
+
                 <h3>Test Connection</h3>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <button className="btn btn-test" onClick={handleTest} disabled={testStatus === 'testing'}>
@@ -3462,7 +3821,7 @@
                   <div className="test-result testing">Connecting...</div>
                 )}
 
-                <h3>Behavior</h3>
+                {!isTerminalProvider(form.provider) && <h3>Behavior</h3>}
                 {form.provider === 'openai-compat' && (
                   <div className="form-row">
                     <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

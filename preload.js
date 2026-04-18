@@ -55,6 +55,18 @@ contextBridge.exposeInMainWorld('agentHub', {
   // Legacy (kept for compat, redirects to in-app auth)
   openAuthTerminal: (agent) => ipcRenderer.invoke('agent:open-auth-terminal', agent),
 
+  // Terminal (real PTY via xterm.js)
+  terminalSpawn: (agent) => ipcRenderer.invoke('terminal:spawn', agent),
+  terminalInput: (agentId, data) => ipcRenderer.send('terminal:input', agentId, data),
+  terminalResize: (agentId, cols, rows) => ipcRenderer.send('terminal:resize', agentId, cols, rows),
+  terminalKill: (agentId) => ipcRenderer.invoke('terminal:kill', agentId),
+  onTerminalData: (cb) => { const h = (_e, id, data) => cb(id, data); ipcRenderer.on('terminal:data', h); return () => ipcRenderer.removeListener('terminal:data', h); },
+  onTerminalExit: (cb) => { const h = (_e, id, code) => cb(id, code); ipcRenderer.on('terminal:exit', h); return () => ipcRenderer.removeListener('terminal:exit', h); },
+  removeTerminalListeners: () => {
+    ipcRenderer.removeAllListeners('terminal:data');
+    ipcRenderer.removeAllListeners('terminal:exit');
+  },
+
   // Theme
   getSystemTheme: () => ipcRenderer.invoke('theme:get'),
   onThemeChange: (cb) => ipcRenderer.on('theme:changed', (_e, isDark) => cb(isDark)),

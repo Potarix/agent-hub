@@ -1,8 +1,12 @@
 const { app, BrowserWindow, ipcMain, nativeTheme, shell } = require('electron');
+const { spawn } = require('child_process');
 const path = require('path');
+const pty = require('node-pty');
 
 const { setMainWindow, activeClaudeProcs } = require('./lib/state');
 const { makeRequest } = require('./lib/http');
+const { getLoginEnv } = require('./lib/local');
+const { runSSHCommand } = require('./lib/ssh');
 
 // Providers
 const { chatOpenClaw, streamOpenClaw, pingOpenClaw, chatOpenClawLocal, pingOpenClawLocal } = require('./providers/openclaw-improved');
@@ -135,6 +139,15 @@ ipcMain.on('agent:permission-response', (_event, requestId, toolUseId, decision)
 
 ipcMain.handle('agent:ping', async (_event, agent) => {
   try {
+    if (agent.provider === 'terminal') return { online: true };
+    if (agent.provider === 'terminal-ssh') {
+      try {
+        await runSSHCommand(agent, 'echo ok', 10000);
+        return { online: true };
+      } catch (err) {
+        return { online: false, error: err.message };
+      }
+    }
     if (agent.provider === 'openclaw') return await pingOpenClaw(agent);
     if (agent.provider === 'hermes') return await pingHermes(agent);
     if (agent.provider === 'openclaw-local') return await pingOpenClawLocal();
@@ -163,6 +176,91 @@ ipcMain.handle('agent:list-models', async (_event, agent) => {
   } catch (err) {
     return { models: [], defaultModel: '', source: 'error', error: err.message };
   }
+});
+
+// ── Terminal Sessions ──
+
+const terminalSessions = new Map(); // agentId -> { pty }
+
+ipcMain.handle('terminal:spawn', async (_event, agent) => {
+  // Kill any existing session
+  const existing = terminalSessions.get(agent.id);
+  if (existing?.pty) {
+    try { existing.pty.kill(); } catch {}
+    terminalSessions.delete(agent.id);
+  }
+
+  const env = getLoginEnv();
+  const shell = env.SHELL || '/bin/bash';
+  const homeDir = env.HOME || '/';
+  let ptyProc;
+
+  if (agent.provider === 'terminal-ssh') {
+    const args = ['-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=10', '-p', String(agent.sshPort || 22)];
+    if (agent.sshKey) args.push('-i', agent.sshKey);
+    args.push(`${agent.sshUser || 'root'}@${agent.sshHost}`);
+    if (agent.workDir) {
+      // Jump into the working directory on connect
+      args.push('-t', `cd ${agent.workDir} 2>/dev/null; exec $SHELL -l`);
+    }
+    ptyProc = pty.spawn('ssh', args, {
+      name: 'xterm-256color',
+      cols: 80, rows: 24,
+      env: { ...env, TERM: 'xterm-256color' },
+    });
+  } else {
+    const startDir = agent.workDir ? agent.workDir.replace(/^~/, homeDir) : homeDir;
+    ptyProc = pty.spawn(shell, ['-l'], {
+      name: 'xterm-256color',
+      cols: 80, rows: 24,
+      cwd: startDir,
+      env: { ...env, TERM: 'xterm-256color' },
+    });
+  }
+
+  terminalSessions.set(agent.id, { pty: ptyProc });
+
+  ptyProc.onData(data => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('terminal:data', agent.id, data);
+    }
+  });
+
+  ptyProc.onExit(({ exitCode }) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('terminal:exit', agent.id, exitCode);
+    }
+    terminalSessions.delete(agent.id);
+  });
+
+  return { pid: ptyProc.pid };
+});
+
+// Write keystrokes to PTY
+ipcMain.on('terminal:input', (_event, agentId, data) => {
+  const session = terminalSessions.get(agentId);
+  if (session?.pty) {
+    try { session.pty.write(data); } catch {}
+  }
+});
+
+// Resize PTY
+ipcMain.on('terminal:resize', (_event, agentId, cols, rows) => {
+  const session = terminalSessions.get(agentId);
+  if (session?.pty) {
+    try { session.pty.resize(Math.max(cols, 2), Math.max(rows, 2)); } catch {}
+  }
+});
+
+// Kill PTY
+ipcMain.handle('terminal:kill', async (_event, agentId) => {
+  const session = terminalSessions.get(agentId);
+  if (session?.pty) {
+    try { session.pty.kill(); } catch {}
+    terminalSessions.delete(agentId);
+    return { killed: true };
+  }
+  return { killed: false };
 });
 
 // ── Register feature handlers ──

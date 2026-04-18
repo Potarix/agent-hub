@@ -64,6 +64,7 @@ const PROVIDER_CONFIG = {
       { name: '/compact', desc: 'Compact conversation context' },
       { name: '/cost', desc: 'Show token and cost usage' },
       { name: '/init', desc: 'Initialize CLAUDE.md project file' },
+      { name: '/mcp', desc: 'Show MCP server status' },
       { name: '/review', desc: 'Review code changes' },
       { name: '/skills', desc: 'Manage local workflow skills' },
     ],
