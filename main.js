@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, nativeTheme, shell } = require('electron');
-const { spawn, execSync } = require('child_process');
+const { spawn, execSync, spawnSync } = require('child_process');
 const path = require('path');
+const pty = require('node-pty');
 
 const { setMainWindow, activeClaudeProcs } = require('./lib/state');
 const { makeRequest } = require('./lib/http');
@@ -210,44 +211,85 @@ ipcMain.handle('terminal:init', async (_event, agent) => {
   }
 });
 
+// Strip PTY artifacts and ANSI escape codes from terminal output
+function cleanTermOutput(text) {
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '')
+    // CSI sequences (colors, cursor movement, erase, etc.)
+    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+    // OSC sequences (title bar, hyperlinks, etc.)
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    // Character set switching
+    .replace(/\x1b[()][AB012]/g, '')
+    // DEC private modes (cursor show/hide, alt screen, etc.)
+    .replace(/\x1b\[\?[0-9;]*[hl]/g, '')
+    // Xterm title sequences
+    .replace(/\x1b\]0;[^\x07]*\x07/g, '')
+    // Remaining single-char escapes
+    .replace(/\x1b[>=<c78HMND]/g, '')
+    // DCS sequences
+    .replace(/\x1bP[^\x1b]*\x1b\\/g, '');
+}
+
 function execTerminalLocal(event, requestId, agent, command, session) {
   const escapedCwd = termShellQuote(session.cwd);
-  const fullCmd = `cd ${escapedCwd} 2>/dev/null; ${command}; __ahrc=$?; echo ""; echo "${CWD_MARKER}"; pwd; exit $__ahrc`;
+  const innerCmd = `cd ${escapedCwd} 2>/dev/null; ${command}; __ahrc=$?; echo ""; echo "${CWD_MARKER}"; pwd; exit $__ahrc`;
 
-  const proc = spawn('bash', ['-l', '-c', fullCmd], {
-    env: getLoginEnv(),
+  const ptyProc = pty.spawn('bash', ['-c', innerCmd], {
+    name: 'xterm-256color',
+    cols: 120,
+    rows: 30,
+    cwd: session.cwd,
+    env: { ...getLoginEnv(), TERM: 'xterm-256color' },
   });
 
-  session.activeProc = proc;
-  let fullStdout = '';
+  // Wrap pty handle to match the interface the rest of the code expects
+  session.activeProc = {
+    pid: ptyProc.pid,
+    stdin: { write: (d) => ptyProc.write(d), destroyed: false },
+    kill: (sig) => { try { ptyProc.kill(sig); } catch {} },
+    _pty: ptyProc,
+  };
 
-  proc.stdout.on('data', (chunk) => {
-    const text = chunk.toString();
-    fullStdout += text;
-    event.sender.send('terminal:output', requestId, text);
+  let fullOutput = '';
+
+  ptyProc.onData((data) => {
+    let text = cleanTermOutput(data);
+    // Suppress PTY echo of stdin input (we already show it as a stdin bubble)
+    if (session._pendingEcho && text) {
+      const echo = session._pendingEcho;
+      const idx = text.indexOf(echo);
+      if (idx !== -1) {
+        text = text.substring(0, idx) + text.substring(idx + echo.length);
+        session._pendingEcho = '';
+      } else {
+        // Partial match - echo might be split across chunks
+        for (let len = Math.min(echo.length, text.length); len > 0; len--) {
+          if (text.startsWith(echo.substring(0, len))) {
+            text = text.substring(len);
+            session._pendingEcho = echo.substring(len);
+            break;
+          }
+        }
+      }
+    }
+    fullOutput += text;
+    if (text) event.sender.send('terminal:output', requestId, text);
   });
 
-  proc.stderr.on('data', (chunk) => {
-    event.sender.send('terminal:output', requestId, chunk.toString());
-  });
-
-  proc.on('close', (code) => {
-    const markerIdx = fullStdout.indexOf(CWD_MARKER);
+  ptyProc.onExit(({ exitCode }) => {
+    const markerIdx = fullOutput.indexOf(CWD_MARKER);
     let newCwd = session.cwd;
     if (markerIdx !== -1) {
-      const afterMarker = fullStdout.substring(markerIdx + CWD_MARKER.length);
+      const afterMarker = fullOutput.substring(markerIdx + CWD_MARKER.length);
       const cwdLine = afterMarker.trim().split('\n')[0].trim();
       if (cwdLine) newCwd = cwdLine;
     }
     session.cwd = newCwd;
     session.activeProc = null;
     terminalSessions.set(agent.id, session);
-    event.sender.send('terminal:done', requestId, { exitCode: code, cwd: newCwd });
-  });
-
-  proc.on('error', (err) => {
-    session.activeProc = null;
-    event.sender.send('terminal:error', requestId, err.message);
+    event.sender.send('terminal:done', requestId, { exitCode, cwd: newCwd });
   });
 }
 
@@ -264,23 +306,24 @@ function execTerminalSSH(event, requestId, agent, command, session) {
     '-o', 'StrictHostKeyChecking=no',
     '-o', 'ConnectTimeout=10',
     '-p', String(sshPort),
+    '-tt',  // Force PTY allocation for interactive commands
   ];
   if (sshKey) args.push('-i', sshKey);
-  args.push(`${sshUser}@${sshHost}`, `bash -l -c ${JSON.stringify(innerCmd)}`);
+  args.push(`${sshUser}@${sshHost}`, `TERM=dumb bash -c ${JSON.stringify(innerCmd)}`);
 
   const proc = spawn('ssh', args);
   session.activeProc = proc;
   let fullStdout = '';
 
   proc.stdout.on('data', (chunk) => {
-    const text = chunk.toString();
+    const text = cleanTermOutput(chunk.toString());
     fullStdout += text;
-    event.sender.send('terminal:output', requestId, text);
+    if (text) event.sender.send('terminal:output', requestId, text);
   });
 
   proc.stderr.on('data', (chunk) => {
-    const text = chunk.toString();
-    if (!text.includes('Warning:') && !text.includes('Permanently added')) {
+    const text = cleanTermOutput(chunk.toString());
+    if (text && !text.includes('Warning:') && !text.includes('Permanently added') && !text.includes('Connection to')) {
       event.sender.send('terminal:output', requestId, text);
     }
   });
@@ -328,10 +371,82 @@ ipcMain.on('terminal:exec', async (event, requestId, agent, command) => {
 ipcMain.handle('terminal:kill', async (_event, agentId) => {
   const session = terminalSessions.get(agentId);
   if (session?.activeProc) {
-    session.activeProc.kill('SIGINT');
+    // Send Ctrl+C through the PTY first (graceful), then SIGINT as fallback
+    if (session.activeProc.stdin && !session.activeProc.stdin.destroyed) {
+      try { session.activeProc.stdin.write('\x03'); } catch {}
+    }
+    try { session.activeProc.kill('SIGINT'); } catch {}
     return { killed: true };
   }
   return { killed: false };
+});
+
+// Stdin forwarding for interactive commands (claude, codex, etc.)
+ipcMain.on('terminal:stdin', (_event, agentId, data) => {
+  const session = terminalSessions.get(agentId);
+  if (!session?.activeProc) return;
+
+  // Track what we're writing so the PTY echo can be suppressed
+  if (session.activeProc._pty) {
+    if (!session._pendingEcho) session._pendingEcho = '';
+    session._pendingEcho += data;
+  }
+
+  if (session.activeProc.stdin && !session.activeProc.stdin.destroyed) {
+    try { session.activeProc.stdin.write(data); } catch {}
+  }
+});
+
+// ── Tab Completion ──
+
+ipcMain.handle('terminal:complete', async (_event, agent, inputText) => {
+  const session = terminalSessions.get(agent.id);
+  if (!session) return { completions: [] };
+
+  // Parse: find the word being completed (last token)
+  const parts = inputText.split(/\s+/);
+  const isFirstWord = parts.length <= 1;
+  const partial = parts[parts.length - 1] || '';
+
+  // Build compgen command based on context
+  let compgenCmd;
+  if (isFirstWord) {
+    compgenCmd = `compgen -c -- ${JSON.stringify(partial)} 2>/dev/null | sort -u | head -40`;
+  } else {
+    compgenCmd = `compgen -f -- ${JSON.stringify(partial)} 2>/dev/null | head -40`;
+  }
+
+  try {
+    if (agent.provider === 'terminal-ssh') {
+      const fullCmd = `cd ${termShellQuote(session.cwd)} 2>/dev/null; ${compgenCmd}`;
+      const raw = await runSSHCommand(agent, fullCmd, 5000, { singleQuoteWrap: true });
+      const completions = raw.trim().split('\n').filter(Boolean);
+      return { completions, partial, isFirstWord };
+    } else {
+      const escapedCwd = termShellQuote(session.cwd);
+      const fullCmd = `cd ${escapedCwd} 2>/dev/null; ${compgenCmd}`;
+      const result = spawnSync('bash', ['-c', fullCmd], {
+        env: { ...getLoginEnv(), TERM: 'dumb' },
+        timeout: 3000,
+        encoding: 'utf-8',
+      });
+      const completions = (result.stdout || '').trim().split('\n').filter(Boolean);
+      // For file completions, check if single match is a directory
+      if (!isFirstWord && completions.length === 1) {
+        const checkDir = spawnSync('bash', ['-c', `cd ${escapedCwd} 2>/dev/null; [ -d ${JSON.stringify(completions[0])} ] && echo dir`], {
+          env: getLoginEnv(),
+          timeout: 1000,
+          encoding: 'utf-8',
+        });
+        if ((checkDir.stdout || '').trim() === 'dir') {
+          completions[0] += '/';
+        }
+      }
+      return { completions, partial, isFirstWord };
+    }
+  } catch {
+    return { completions: [], partial, isFirstWord };
+  }
 });
 
 // ── Register feature handlers ──

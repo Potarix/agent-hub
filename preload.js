@@ -58,7 +58,9 @@ contextBridge.exposeInMainWorld('agentHub', {
   // Terminal
   terminalInit: (agent) => ipcRenderer.invoke('terminal:init', agent),
   terminalExec: (requestId, agent, command) => ipcRenderer.send('terminal:exec', requestId, agent, command),
+  terminalStdin: (agentId, data) => ipcRenderer.send('terminal:stdin', agentId, data),
   terminalKill: (agentId) => ipcRenderer.invoke('terminal:kill', agentId),
+  terminalComplete: (agent, inputText) => ipcRenderer.invoke('terminal:complete', agent, inputText),
   onTerminalOutput: (cb) => { const h = (_e, id, text) => cb(id, text); ipcRenderer.on('terminal:output', h); return () => ipcRenderer.removeListener('terminal:output', h); },
   onTerminalCwd: (cb) => { const h = (_e, id, cwd) => cb(id, cwd); ipcRenderer.on('terminal:cwd', h); return () => ipcRenderer.removeListener('terminal:cwd', h); },
   onTerminalDone: (cb) => { const h = (_e, id, meta) => cb(id, meta); ipcRenderer.on('terminal:done', h); return () => ipcRenderer.removeListener('terminal:done', h); },

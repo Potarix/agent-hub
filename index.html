@@ -1023,6 +1023,10 @@
     .btn-attach:active { opacity: 0.8; }
 
     /* ── Terminal ── */
+    .terminal-messages .msg {
+      animation-duration: 0.08s;
+    }
+
     .terminal-cwd {
       font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
       font-size: 11px;
@@ -1063,6 +1067,16 @@
       font-size: 13px;
     }
 
+    .msg.stdin-msg {
+      align-self: flex-end;
+      background: var(--bg-3);
+      border-radius: 16px 16px 4px 16px;
+      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+      font-size: 13px;
+      color: var(--text-1);
+      max-width: 75%;
+    }
+
     .terminal-input-wrap {
       font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
     }
@@ -1074,6 +1088,10 @@
       padding: 6px 0;
       flex-shrink: 0;
       user-select: none;
+    }
+
+    .terminal-input-prompt.stdin-mode {
+      color: var(--orange);
     }
 
     .terminal-input {
@@ -3116,12 +3134,18 @@
       const [initialized, setInitialized] = useState(false);
       const [history, setHistory] = useState([]);
       const [historyIdx, setHistoryIdx] = useState(-1);
+      const [completions, setCompletions] = useState([]);
+      const [completionIdx, setCompletionIdx] = useState(0);
+      const [showCompletions, setShowCompletions] = useState(false);
       const bottomRef = useRef(null);
       const inputRef = useRef(null);
       const chatAreaRef = useRef(null);
       const streamOutputRef = useRef('');
       const activeRequestIdRef = useRef(null);
       const loadingRef = useRef(false);
+      const rafRef = useRef(null);
+      const tabCountRef = useRef(0);
+      const lastTabPartialRef = useRef('');
 
       // Initialize terminal session
       useEffect(() => {
@@ -3131,9 +3155,9 @@
         });
       }, [agent.id]);
 
-      // Scroll to bottom
+      // Scroll to bottom - instant for snappy feel
       useEffect(() => {
-        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+        bottomRef.current?.scrollIntoView({ behavior: 'auto' });
       }, [messages, streamOutput]);
 
       // Focus input
@@ -3148,19 +3172,26 @@
         const offOutput = window.agentHub.onTerminalOutput((id, text) => {
           if (cancelled || id !== activeRequestIdRef.current) return;
           streamOutputRef.current += text;
-          setStreamOutput(streamOutputRef.current);
+          // Throttle React updates to animation frames for smooth high-throughput output
+          if (!rafRef.current) {
+            rafRef.current = requestAnimationFrame(() => {
+              rafRef.current = null;
+              if (!cancelled) setStreamOutput(streamOutputRef.current);
+            });
+          }
         });
 
         const offDone = window.agentHub.onTerminalDone((id, meta) => {
           if (cancelled || id !== activeRequestIdRef.current) return;
-          let finalOutput = streamOutputRef.current;
+          // Cancel any pending rAF
+          if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
 
+          let finalOutput = streamOutputRef.current;
           // Strip CWD marker and everything after it
           const markerIdx = finalOutput.indexOf('___AGHUB_CWD___');
           if (markerIdx !== -1) {
             finalOutput = finalOutput.substring(0, markerIdx);
           }
-          // Trim trailing whitespace/newlines
           finalOutput = finalOutput.replace(/\n+$/, '');
 
           if (meta.cwd) setCwd(meta.cwd);
@@ -3188,6 +3219,7 @@
 
         const offError = window.agentHub.onTerminalError((id, err) => {
           if (cancelled || id !== activeRequestIdRef.current) return;
+          if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
           setMessages(prev => [...prev, { role: 'error', content: err }]);
           streamOutputRef.current = '';
           setStreamOutput('');
@@ -3199,25 +3231,36 @@
 
         return () => {
           cancelled = true;
+          if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
           offOutput();
           offDone();
           offError();
         };
       }, [agent.id]);
 
-      const sendCommand = () => {
-        const cmd = input.trim();
-        if (!cmd || loadingRef.current) return;
+      const handleSend = () => {
+        const text = input.trim();
+        if (!text) return;
+
+        // If a command is already running, forward input as stdin
+        if (loadingRef.current) {
+          window.agentHub.terminalStdin(agent.id, text + '\n');
+          // Show what was sent as a dimmer stdin message
+          setMessages(prev => [...prev, { role: 'stdin', content: text }]);
+          setInput('');
+          if (inputRef.current) inputRef.current.style.height = 'auto';
+          return;
+        }
 
         // Handle clear locally
-        if (cmd === 'clear') {
+        if (text === 'clear') {
           setMessages([]);
           setInput('');
           return;
         }
 
-        setMessages(prev => [...prev, { role: 'user', content: cmd }]);
-        setHistory(prev => [cmd, ...prev.filter(h => h !== cmd)].slice(0, 100));
+        setMessages(prev => [...prev, { role: 'user', content: text }]);
+        setHistory(prev => [text, ...prev.filter(h => h !== text)].slice(0, 100));
         setHistoryIdx(-1);
         setInput('');
         if (inputRef.current) inputRef.current.style.height = 'auto';
@@ -3235,17 +3278,115 @@
           setLastActivityTime(prev => ({ ...prev, [agent.id]: Date.now() }));
         }
 
-        window.agentHub.terminalExec(requestId, agent, cmd);
+        window.agentHub.terminalExec(requestId, agent, text);
       };
 
       const handleKill = () => {
         window.agentHub.terminalKill(agent.id);
       };
 
+      const applyCompletion = (completion) => {
+        const parts = input.split(/\s+/);
+        const partial = parts[parts.length - 1] || '';
+        // Replace the last partial word with the completion
+        const prefix = input.substring(0, input.length - partial.length);
+        const needsSpace = !completion.endsWith('/');
+        setInput(prefix + completion + (needsSpace ? ' ' : ''));
+        setShowCompletions(false);
+        setCompletions([]);
+        tabCountRef.current = 0;
+        lastTabPartialRef.current = '';
+        inputRef.current?.focus();
+      };
+
       const onKeyDown = (e) => {
+        // Reset tab count on any non-tab key
+        if (e.key !== 'Tab') {
+          tabCountRef.current = 0;
+          lastTabPartialRef.current = '';
+        }
+
+        // Escape closes completion palette
+        if (e.key === 'Escape' && showCompletions) {
+          e.preventDefault();
+          setShowCompletions(false);
+          setCompletions([]);
+          return;
+        }
+
+        // When completion palette is open, arrow keys navigate it
+        if (showCompletions && completions.length > 0) {
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setCompletionIdx(prev => (prev + 1) % completions.length);
+            return;
+          }
+          if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setCompletionIdx(prev => (prev - 1 + completions.length) % completions.length);
+            return;
+          }
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            applyCompletion(completions[completionIdx]);
+            return;
+          }
+        }
+
+        // Tab completion
+        if (e.key === 'Tab' && !loadingRef.current) {
+          e.preventDefault();
+          const text = input;
+          if (!text) return;
+
+          tabCountRef.current++;
+
+          // If palette is already showing, cycle through completions
+          if (showCompletions && completions.length > 0) {
+            setCompletionIdx(prev => e.shiftKey
+              ? (prev - 1 + completions.length) % completions.length
+              : (prev + 1) % completions.length
+            );
+            return;
+          }
+
+          window.agentHub.terminalComplete(agent, text).then(res => {
+            if (!res.completions || res.completions.length === 0) return;
+
+            if (res.completions.length === 1) {
+              // Single match: apply immediately
+              applyCompletion(res.completions[0]);
+            } else {
+              // Multiple matches: find common prefix first
+              const common = res.completions.reduce((a, b) => {
+                let i = 0;
+                while (i < a.length && i < b.length && a[i] === b[i]) i++;
+                return a.substring(0, i);
+              });
+
+              if (common.length > res.partial.length) {
+                // Fill common prefix
+                const parts = input.split(/\s+/);
+                const partial = parts[parts.length - 1] || '';
+                const prefix = input.substring(0, input.length - partial.length);
+                setInput(prefix + common);
+                lastTabPartialRef.current = common;
+              }
+
+              // Show palette (first tab fills prefix, always show palette for multiple)
+              setCompletions(res.completions);
+              setCompletionIdx(0);
+              setShowCompletions(true);
+            }
+          });
+          return;
+        }
+
         if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault();
-          sendCommand();
+          setShowCompletions(false);
+          setCompletions([]);
+          handleSend();
           return;
         }
         // Ctrl+C to kill running process
@@ -3254,15 +3395,15 @@
           handleKill();
           return;
         }
-        // Command history with up/down arrows
-        if (e.key === 'ArrowUp' && history.length > 0) {
+        // Command history with up/down arrows (only when not running and palette not open)
+        if (!loadingRef.current && !showCompletions && e.key === 'ArrowUp' && history.length > 0) {
           e.preventDefault();
           const newIdx = Math.min(historyIdx + 1, history.length - 1);
           setHistoryIdx(newIdx);
           setInput(history[newIdx]);
           return;
         }
-        if (e.key === 'ArrowDown') {
+        if (!loadingRef.current && !showCompletions && e.key === 'ArrowDown') {
           e.preventDefault();
           if (historyIdx <= 0) {
             setHistoryIdx(-1);
@@ -3306,7 +3447,7 @@
             </div>
           </div>
 
-          <div className="chat-messages" ref={chatAreaRef}>
+          <div className="chat-messages terminal-messages" ref={chatAreaRef}>
             {messages.length === 0 && !loading && (
               <div className="chat-empty">
                 <div className="chat-empty-icon">
@@ -3323,13 +3464,14 @@
                   Type a command and press <span className="chat-empty-kbd">Enter</span> to run it
                 </div>
                 <div className="chat-empty-hint" style={{ marginTop: 4, fontSize: 11 }}>
-                  <span className="chat-empty-kbd">\u2191</span> / <span className="chat-empty-kbd">\u2193</span> for history &nbsp; <span className="chat-empty-kbd">Ctrl+C</span> to kill &nbsp; <code>clear</code> to reset
+                  <span className="chat-empty-kbd">{'\u2191'}</span> / <span className="chat-empty-kbd">{'\u2193'}</span> history &nbsp; <span className="chat-empty-kbd">Tab</span> complete &nbsp; <span className="chat-empty-kbd">Ctrl+C</span> kill &nbsp; <code>clear</code> reset
                 </div>
               </div>
             )}
             {messages.map((msg, i) => (
-              <div key={i} className={`msg ${msg.role} ${msg.role === 'assistant' ? 'terminal-output' : ''}`}>
+              <div key={i} className={`msg ${msg.role === 'stdin' ? 'stdin-msg' : msg.role} ${msg.role === 'assistant' ? 'terminal-output' : ''}`}>
                 {msg.role === 'user' && <span className="terminal-prompt">$</span>}
+                {msg.role === 'stdin' && <span className="terminal-prompt" style={{ opacity: 0.4 }}>{'>'}</span>}
                 {msg.role === 'assistant' ? (
                   <>
                     <pre className="terminal-pre">{msg.content}</pre>
@@ -3357,17 +3499,35 @@
           </div>
 
           <div className="chat-input-bar">
-            <div className="chat-input-wrap terminal-input-wrap">
-              <span className="terminal-input-prompt">$</span>
+            <div className="chat-input-wrap terminal-input-wrap" style={{ position: 'relative' }}>
+              {showCompletions && completions.length > 0 && (
+                <div className="slash-palette" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                  {completions.map((c, i) => (
+                    <div
+                      key={c}
+                      className={`slash-palette-item ${i === completionIdx ? 'selected' : ''}`}
+                      onClick={() => applyCompletion(c)}
+                      onMouseEnter={() => setCompletionIdx(i)}
+                    >
+                      <span className="slash-palette-item-name">{c}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <span className={`terminal-input-prompt ${loading ? 'stdin-mode' : ''}`}>
+                {loading ? '>' : '$'}
+              </span>
               <textarea
                 ref={inputRef}
                 className="chat-input terminal-input"
                 rows={1}
-                placeholder="Enter command..."
+                placeholder={loading ? 'Type input for running process...' : 'Enter command...'}
                 value={input}
                 onChange={e => {
                   setInput(e.target.value);
-                  setHistoryIdx(-1);
+                  if (!loadingRef.current) setHistoryIdx(-1);
+                  // Close completion palette on manual typing
+                  if (showCompletions) { setShowCompletions(false); setCompletions([]); }
                   const el = e.target;
                   el.style.height = 'auto';
                   el.style.height = Math.min(el.scrollHeight, 200) + 'px';
@@ -3381,7 +3541,7 @@
                   </svg>
                 </button>
               ) : (
-                <button className="btn-send" onClick={sendCommand} disabled={!input.trim()}>
+                <button className="btn-send" onClick={handleSend} disabled={!input.trim()}>
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 3l5 5h-3.5v5h-3V8H3l5-5z" fill="currentColor"/></svg>
                 </button>
               )}
