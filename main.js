@@ -1,8 +1,11 @@
 const { app, BrowserWindow, ipcMain, nativeTheme, shell } = require('electron');
+const { spawn, execSync } = require('child_process');
 const path = require('path');
 
 const { setMainWindow, activeClaudeProcs } = require('./lib/state');
 const { makeRequest } = require('./lib/http');
+const { getLoginEnv } = require('./lib/local');
+const { runSSHCommand } = require('./lib/ssh');
 
 // Providers
 const { chatOpenClaw, streamOpenClaw, pingOpenClaw, chatOpenClawLocal, pingOpenClawLocal } = require('./providers/openclaw-improved');
@@ -135,6 +138,15 @@ ipcMain.on('agent:permission-response', (_event, requestId, toolUseId, decision)
 
 ipcMain.handle('agent:ping', async (_event, agent) => {
   try {
+    if (agent.provider === 'terminal') return { online: true };
+    if (agent.provider === 'terminal-ssh') {
+      try {
+        await runSSHCommand(agent, 'echo ok', 10000);
+        return { online: true };
+      } catch (err) {
+        return { online: false, error: err.message };
+      }
+    }
     if (agent.provider === 'openclaw') return await pingOpenClaw(agent);
     if (agent.provider === 'hermes') return await pingHermes(agent);
     if (agent.provider === 'openclaw-local') return await pingOpenClawLocal();
@@ -163,6 +175,163 @@ ipcMain.handle('agent:list-models', async (_event, agent) => {
   } catch (err) {
     return { models: [], defaultModel: '', source: 'error', error: err.message };
   }
+});
+
+// ── Terminal Sessions ──
+
+const terminalSessions = new Map(); // agentId -> { cwd, activeProc }
+const CWD_MARKER = '___AGHUB_CWD___';
+
+function termShellQuote(s) {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
+ipcMain.handle('terminal:init', async (_event, agent) => {
+  try {
+    if (agent.provider === 'terminal-ssh') {
+      const startDir = agent.workDir || '~';
+      const raw = await runSSHCommand(agent, `cd ${startDir} 2>/dev/null && pwd || echo $HOME`, 10000);
+      const cwd = raw.trim().split('\n').pop().trim();
+      terminalSessions.set(agent.id, { cwd });
+      return { cwd };
+    } else {
+      const homeDir = process.env.HOME || '/';
+      let startDir = agent.workDir ? agent.workDir.replace(/^~/, homeDir) : homeDir;
+      try {
+        startDir = execSync(`cd ${termShellQuote(startDir)} 2>/dev/null && pwd || echo ${termShellQuote(homeDir)}`, { encoding: 'utf-8' }).trim();
+      } catch { startDir = homeDir; }
+      terminalSessions.set(agent.id, { cwd: startDir });
+      return { cwd: startDir };
+    }
+  } catch (err) {
+    const fallback = process.env.HOME || '/';
+    terminalSessions.set(agent.id, { cwd: fallback });
+    return { cwd: fallback, error: err.message };
+  }
+});
+
+function execTerminalLocal(event, requestId, agent, command, session) {
+  const escapedCwd = termShellQuote(session.cwd);
+  const fullCmd = `cd ${escapedCwd} 2>/dev/null; ${command}; __ahrc=$?; echo ""; echo "${CWD_MARKER}"; pwd; exit $__ahrc`;
+
+  const proc = spawn('bash', ['-l', '-c', fullCmd], {
+    env: getLoginEnv(),
+  });
+
+  session.activeProc = proc;
+  let fullStdout = '';
+
+  proc.stdout.on('data', (chunk) => {
+    const text = chunk.toString();
+    fullStdout += text;
+    event.sender.send('terminal:output', requestId, text);
+  });
+
+  proc.stderr.on('data', (chunk) => {
+    event.sender.send('terminal:output', requestId, chunk.toString());
+  });
+
+  proc.on('close', (code) => {
+    const markerIdx = fullStdout.indexOf(CWD_MARKER);
+    let newCwd = session.cwd;
+    if (markerIdx !== -1) {
+      const afterMarker = fullStdout.substring(markerIdx + CWD_MARKER.length);
+      const cwdLine = afterMarker.trim().split('\n')[0].trim();
+      if (cwdLine) newCwd = cwdLine;
+    }
+    session.cwd = newCwd;
+    session.activeProc = null;
+    terminalSessions.set(agent.id, session);
+    event.sender.send('terminal:done', requestId, { exitCode: code, cwd: newCwd });
+  });
+
+  proc.on('error', (err) => {
+    session.activeProc = null;
+    event.sender.send('terminal:error', requestId, err.message);
+  });
+}
+
+function execTerminalSSH(event, requestId, agent, command, session) {
+  const sshUser = agent.sshUser || 'root';
+  const sshHost = agent.sshHost;
+  const sshPort = agent.sshPort || 22;
+  const sshKey = agent.sshKey || '';
+
+  const escapedCwd = termShellQuote(session.cwd);
+  const innerCmd = `cd ${escapedCwd} 2>/dev/null; ${command}; __ahrc=$?; echo ""; echo "${CWD_MARKER}"; pwd; exit $__ahrc`;
+
+  const args = [
+    '-o', 'StrictHostKeyChecking=no',
+    '-o', 'ConnectTimeout=10',
+    '-p', String(sshPort),
+  ];
+  if (sshKey) args.push('-i', sshKey);
+  args.push(`${sshUser}@${sshHost}`, `bash -l -c ${JSON.stringify(innerCmd)}`);
+
+  const proc = spawn('ssh', args);
+  session.activeProc = proc;
+  let fullStdout = '';
+
+  proc.stdout.on('data', (chunk) => {
+    const text = chunk.toString();
+    fullStdout += text;
+    event.sender.send('terminal:output', requestId, text);
+  });
+
+  proc.stderr.on('data', (chunk) => {
+    const text = chunk.toString();
+    if (!text.includes('Warning:') && !text.includes('Permanently added')) {
+      event.sender.send('terminal:output', requestId, text);
+    }
+  });
+
+  proc.on('close', (code) => {
+    const markerIdx = fullStdout.indexOf(CWD_MARKER);
+    let newCwd = session.cwd;
+    if (markerIdx !== -1) {
+      const afterMarker = fullStdout.substring(markerIdx + CWD_MARKER.length);
+      const cwdLine = afterMarker.trim().split('\n')[0].trim();
+      if (cwdLine) newCwd = cwdLine;
+    }
+    session.cwd = newCwd;
+    session.activeProc = null;
+    terminalSessions.set(agent.id, session);
+
+    if (code === 255 && !fullStdout.trim()) {
+      event.sender.send('terminal:error', requestId, 'SSH connection failed');
+    } else {
+      event.sender.send('terminal:done', requestId, { exitCode: code, cwd: newCwd });
+    }
+  });
+
+  proc.on('error', (err) => {
+    session.activeProc = null;
+    event.sender.send('terminal:error', requestId, err.message);
+  });
+}
+
+ipcMain.on('terminal:exec', async (event, requestId, agent, command) => {
+  const session = terminalSessions.get(agent.id) || { cwd: process.env.HOME || '/' };
+  if (!terminalSessions.has(agent.id)) terminalSessions.set(agent.id, session);
+
+  try {
+    if (agent.provider === 'terminal-ssh') {
+      execTerminalSSH(event, requestId, agent, command, session);
+    } else {
+      execTerminalLocal(event, requestId, agent, command, session);
+    }
+  } catch (err) {
+    event.sender.send('terminal:error', requestId, err.message);
+  }
+});
+
+ipcMain.handle('terminal:kill', async (_event, agentId) => {
+  const session = terminalSessions.get(agentId);
+  if (session?.activeProc) {
+    session.activeProc.kill('SIGINT');
+    return { killed: true };
+  }
+  return { killed: false };
 });
 
 // ── Register feature handlers ──

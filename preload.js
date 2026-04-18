@@ -55,6 +55,21 @@ contextBridge.exposeInMainWorld('agentHub', {
   // Legacy (kept for compat, redirects to in-app auth)
   openAuthTerminal: (agent) => ipcRenderer.invoke('agent:open-auth-terminal', agent),
 
+  // Terminal
+  terminalInit: (agent) => ipcRenderer.invoke('terminal:init', agent),
+  terminalExec: (requestId, agent, command) => ipcRenderer.send('terminal:exec', requestId, agent, command),
+  terminalKill: (agentId) => ipcRenderer.invoke('terminal:kill', agentId),
+  onTerminalOutput: (cb) => { const h = (_e, id, text) => cb(id, text); ipcRenderer.on('terminal:output', h); return () => ipcRenderer.removeListener('terminal:output', h); },
+  onTerminalCwd: (cb) => { const h = (_e, id, cwd) => cb(id, cwd); ipcRenderer.on('terminal:cwd', h); return () => ipcRenderer.removeListener('terminal:cwd', h); },
+  onTerminalDone: (cb) => { const h = (_e, id, meta) => cb(id, meta); ipcRenderer.on('terminal:done', h); return () => ipcRenderer.removeListener('terminal:done', h); },
+  onTerminalError: (cb) => { const h = (_e, id, err) => cb(id, err); ipcRenderer.on('terminal:error', h); return () => ipcRenderer.removeListener('terminal:error', h); },
+  removeTerminalListeners: () => {
+    ipcRenderer.removeAllListeners('terminal:output');
+    ipcRenderer.removeAllListeners('terminal:cwd');
+    ipcRenderer.removeAllListeners('terminal:done');
+    ipcRenderer.removeAllListeners('terminal:error');
+  },
+
   // Theme
   getSystemTheme: () => ipcRenderer.invoke('theme:get'),
   onThemeChange: (cb) => ipcRenderer.on('theme:changed', (_e, isDark) => cb(isDark)),

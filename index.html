@@ -1022,6 +1022,87 @@
     .btn-attach:hover { background: var(--border-light); color: var(--text-1); }
     .btn-attach:active { opacity: 0.8; }
 
+    /* ── Terminal ── */
+    .terminal-cwd {
+      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+      font-size: 11px;
+      color: var(--text-2);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      max-width: 400px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      padding: 2px 8px;
+      background: var(--bg-2);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+    }
+
+    .terminal-output .terminal-pre {
+      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+      font-size: 13px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-all;
+      margin: 0;
+      background: none;
+      color: inherit;
+    }
+
+    .msg.user .terminal-prompt {
+      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+      opacity: 0.6;
+      margin-right: 6px;
+      font-size: 13px;
+    }
+
+    .msg.user .terminal-cmd {
+      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+      font-size: 13px;
+    }
+
+    .terminal-input-wrap {
+      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+    }
+
+    .terminal-input-prompt {
+      color: var(--text-2);
+      font-size: 14px;
+      line-height: 1;
+      padding: 6px 0;
+      flex-shrink: 0;
+      user-select: none;
+    }
+
+    .terminal-input {
+      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace !important;
+      font-size: 14px !important;
+    }
+
+    .btn-kill {
+      background: var(--red) !important;
+    }
+    .btn-kill:hover { background: #e63329 !important; }
+
+    .terminal-exit-code {
+      display: inline-block;
+      font-family: 'JetBrains Mono', 'SF Mono', monospace;
+      font-size: 10px;
+      padding: 1px 5px;
+      border-radius: 3px;
+      margin-top: 4px;
+    }
+    .terminal-exit-code.success {
+      color: var(--green);
+      background: var(--green-dim);
+    }
+    .terminal-exit-code.error {
+      color: var(--red);
+      background: var(--red-dim);
+    }
+
     .selected-images {
       display: flex;
       gap: 8px;
@@ -1248,6 +1329,7 @@
     .provider-claude-code { background: #FFCC00; color: #000; }
     .provider-hermes { background: #AF52DE; color: white; }
     .provider-codex { background: #34C759; color: white; }
+    .provider-terminal { background: #1a1a2e; color: #00ff41; border: 1px solid #00ff41; }
     .provider-generic { background: #007AFF; color: white; }
 
     /* ── Slash Command Palette ── */
@@ -1613,7 +1695,10 @@
         window.agentHub.onThemeChange(isDark => {
           setTheme(isDark ? 'dark' : 'light');
         });
-        return () => window.agentHub.removeStreamListeners?.();
+        return () => {
+          window.agentHub.removeStreamListeners?.();
+          window.agentHub.removeTerminalListeners?.();
+        };
       }, []);
 
       useEffect(() => {
@@ -1687,25 +1772,44 @@
               )}
               {agents.map(ag => (
                 <div key={ag.id} style={{ display: activeId === ag.id ? 'contents' : 'none' }}>
-                  <ChatView
-                    agent={ag}
-                    isActive={activeId === ag.id}
-                    status={statuses[ag.id]}
-                    messages={chats[ag.id] || []}
-                    setMessages={(msgs) => setChats(prev => ({ ...prev, [ag.id]: typeof msgs === 'function' ? msgs(prev[ag.id] || []) : msgs }))}
-                    onUpdateAgent={updateAgent}
-                    completionStatus={completionStatus[ag.id]}
-                    setCompletionStatus={(status) => setCompletionStatus(prev => ({ ...prev, [ag.id]: typeof status === 'function' ? status(prev[ag.id]) : status }))}
-                    onLoadingChange={(isLoading) => {
-                      setLoadingAgents(prev => {
-                        const next = new Set(prev);
-                        if (isLoading) next.add(ag.id);
-                        else next.delete(ag.id);
-                        return next;
-                      });
-                    }}
-                    setLastActivityTime={setLastActivityTime}
-                  />
+                  {isTerminalProvider(ag.provider) ? (
+                    <TerminalView
+                      agent={ag}
+                      isActive={activeId === ag.id}
+                      status={statuses[ag.id]}
+                      messages={chats[ag.id] || []}
+                      setMessages={(msgs) => setChats(prev => ({ ...prev, [ag.id]: typeof msgs === 'function' ? msgs(prev[ag.id] || []) : msgs }))}
+                      onLoadingChange={(isLoading) => {
+                        setLoadingAgents(prev => {
+                          const next = new Set(prev);
+                          if (isLoading) next.add(ag.id);
+                          else next.delete(ag.id);
+                          return next;
+                        });
+                      }}
+                      setLastActivityTime={setLastActivityTime}
+                    />
+                  ) : (
+                    <ChatView
+                      agent={ag}
+                      isActive={activeId === ag.id}
+                      status={statuses[ag.id]}
+                      messages={chats[ag.id] || []}
+                      setMessages={(msgs) => setChats(prev => ({ ...prev, [ag.id]: typeof msgs === 'function' ? msgs(prev[ag.id] || []) : msgs }))}
+                      onUpdateAgent={updateAgent}
+                      completionStatus={completionStatus[ag.id]}
+                      setCompletionStatus={(status) => setCompletionStatus(prev => ({ ...prev, [ag.id]: typeof status === 'function' ? status(prev[ag.id]) : status }))}
+                      onLoadingChange={(isLoading) => {
+                        setLoadingAgents(prev => {
+                          const next = new Set(prev);
+                          if (isLoading) next.add(ag.id);
+                          else next.delete(ag.id);
+                          return next;
+                        });
+                      }}
+                      setLastActivityTime={setLastActivityTime}
+                    />
+                  )}
                 </div>
               ))}
             </div>
@@ -1756,6 +1860,10 @@
 
     function isCodexProvider(provider) {
       return provider === 'codex' || provider === 'codex-ssh';
+    }
+
+    function isTerminalProvider(provider) {
+      return provider === 'terminal' || provider === 'terminal-ssh';
     }
 
     function formatModelLabel(modelId) {
@@ -1850,7 +1958,7 @@
                       )}
                     </div>
                     <div className="agent-provider">
-                      {agent.provider === 'claude-code' ? 'Claude Code' : agent.provider === 'claude-code-ssh' ? 'Claude Code SSH' : agent.provider === 'openclaw-local' ? 'OpenClaw Local' : agent.provider === 'openclaw' ? 'OpenClaw' : agent.provider === 'hermes-local' ? 'Hermes Local' : agent.provider === 'hermes' ? 'Hermes SSH' : agent.provider === 'codex' ? 'Codex' : agent.provider === 'codex-ssh' ? 'Codex SSH' : agent.provider === 'openai-compat' ? 'OpenAI Compat' : agent.provider}
+                      {agent.provider === 'claude-code' ? 'Claude Code' : agent.provider === 'claude-code-ssh' ? 'Claude Code SSH' : agent.provider === 'openclaw-local' ? 'OpenClaw Local' : agent.provider === 'openclaw' ? 'OpenClaw' : agent.provider === 'hermes-local' ? 'Hermes Local' : agent.provider === 'hermes' ? 'Hermes SSH' : agent.provider === 'codex' ? 'Codex' : agent.provider === 'codex-ssh' ? 'Codex SSH' : agent.provider === 'terminal' ? 'Terminal' : agent.provider === 'terminal-ssh' ? 'Terminal SSH' : agent.provider === 'openai-compat' ? 'OpenAI Compat' : agent.provider}
                       {agent.model ? ` / ${(getStaticModelAliases(agent.provider).find(m => m.id === agent.model) || {}).label || formatModelLabel(agent.model) || agent.model}` : ''}
                     </div>
                   </div>
@@ -2999,6 +3107,290 @@
       );
     }
 
+    // ── Terminal View ──
+    function TerminalView({ agent, isActive, status, messages, setMessages, onLoadingChange, setLastActivityTime }) {
+      const [input, setInput] = useState('');
+      const [loading, setLoading] = useState(false);
+      const [streamOutput, setStreamOutput] = useState('');
+      const [cwd, setCwd] = useState('~');
+      const [initialized, setInitialized] = useState(false);
+      const [history, setHistory] = useState([]);
+      const [historyIdx, setHistoryIdx] = useState(-1);
+      const bottomRef = useRef(null);
+      const inputRef = useRef(null);
+      const chatAreaRef = useRef(null);
+      const streamOutputRef = useRef('');
+      const activeRequestIdRef = useRef(null);
+      const loadingRef = useRef(false);
+
+      // Initialize terminal session
+      useEffect(() => {
+        window.agentHub.terminalInit(agent).then(res => {
+          if (res.cwd) setCwd(res.cwd);
+          setInitialized(true);
+        });
+      }, [agent.id]);
+
+      // Scroll to bottom
+      useEffect(() => {
+        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, [messages, streamOutput]);
+
+      // Focus input
+      useEffect(() => {
+        if (isActive) inputRef.current?.focus();
+      }, [agent.id, isActive]);
+
+      // Set up terminal listeners
+      useEffect(() => {
+        let cancelled = false;
+
+        const offOutput = window.agentHub.onTerminalOutput((id, text) => {
+          if (cancelled || id !== activeRequestIdRef.current) return;
+          streamOutputRef.current += text;
+          setStreamOutput(streamOutputRef.current);
+        });
+
+        const offDone = window.agentHub.onTerminalDone((id, meta) => {
+          if (cancelled || id !== activeRequestIdRef.current) return;
+          let finalOutput = streamOutputRef.current;
+
+          // Strip CWD marker and everything after it
+          const markerIdx = finalOutput.indexOf('___AGHUB_CWD___');
+          if (markerIdx !== -1) {
+            finalOutput = finalOutput.substring(0, markerIdx);
+          }
+          // Trim trailing whitespace/newlines
+          finalOutput = finalOutput.replace(/\n+$/, '');
+
+          if (meta.cwd) setCwd(meta.cwd);
+
+          if (finalOutput) {
+            setMessages(prev => [...prev, {
+              role: 'assistant',
+              content: finalOutput,
+              exitCode: meta.exitCode,
+            }]);
+          } else if (meta.exitCode && meta.exitCode !== 0) {
+            setMessages(prev => [...prev, {
+              role: 'error',
+              content: `Exited with code ${meta.exitCode}`,
+            }]);
+          }
+
+          streamOutputRef.current = '';
+          setStreamOutput('');
+          setLoading(false);
+          loadingRef.current = false;
+          onLoadingChange?.(false);
+          activeRequestIdRef.current = null;
+        });
+
+        const offError = window.agentHub.onTerminalError((id, err) => {
+          if (cancelled || id !== activeRequestIdRef.current) return;
+          setMessages(prev => [...prev, { role: 'error', content: err }]);
+          streamOutputRef.current = '';
+          setStreamOutput('');
+          setLoading(false);
+          loadingRef.current = false;
+          onLoadingChange?.(false);
+          activeRequestIdRef.current = null;
+        });
+
+        return () => {
+          cancelled = true;
+          offOutput();
+          offDone();
+          offError();
+        };
+      }, [agent.id]);
+
+      const sendCommand = () => {
+        const cmd = input.trim();
+        if (!cmd || loadingRef.current) return;
+
+        // Handle clear locally
+        if (cmd === 'clear') {
+          setMessages([]);
+          setInput('');
+          return;
+        }
+
+        setMessages(prev => [...prev, { role: 'user', content: cmd }]);
+        setHistory(prev => [cmd, ...prev.filter(h => h !== cmd)].slice(0, 100));
+        setHistoryIdx(-1);
+        setInput('');
+        if (inputRef.current) inputRef.current.style.height = 'auto';
+
+        streamOutputRef.current = '';
+        setStreamOutput('');
+        setLoading(true);
+        loadingRef.current = true;
+        onLoadingChange?.(true);
+
+        const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2);
+        activeRequestIdRef.current = requestId;
+
+        if (setLastActivityTime) {
+          setLastActivityTime(prev => ({ ...prev, [agent.id]: Date.now() }));
+        }
+
+        window.agentHub.terminalExec(requestId, agent, cmd);
+      };
+
+      const handleKill = () => {
+        window.agentHub.terminalKill(agent.id);
+      };
+
+      const onKeyDown = (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendCommand();
+          return;
+        }
+        // Ctrl+C to kill running process
+        if (e.key === 'c' && e.ctrlKey && loadingRef.current) {
+          e.preventDefault();
+          handleKill();
+          return;
+        }
+        // Command history with up/down arrows
+        if (e.key === 'ArrowUp' && history.length > 0) {
+          e.preventDefault();
+          const newIdx = Math.min(historyIdx + 1, history.length - 1);
+          setHistoryIdx(newIdx);
+          setInput(history[newIdx]);
+          return;
+        }
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          if (historyIdx <= 0) {
+            setHistoryIdx(-1);
+            setInput('');
+          } else {
+            const newIdx = historyIdx - 1;
+            setHistoryIdx(newIdx);
+            setInput(history[newIdx]);
+          }
+          return;
+        }
+      };
+
+      // Strip marker from streaming display
+      const displayOutput = (() => {
+        const idx = streamOutput.indexOf('___AGHUB_CWD___');
+        if (idx !== -1) return streamOutput.substring(0, idx).replace(/\n+$/, '');
+        return streamOutput;
+      })();
+
+      return (
+        <>
+          <div className="chat-header">
+            <div className="chat-header-top">
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                <div className={`agent-avatar ${agent.providerClass}`} style={{ width: 34, height: 34, fontSize: 12 }}>
+                  {agent.emoji}
+                </div>
+                <div className="agent-name">{agent.name}</div>
+                <div className="terminal-cwd" title={cwd}>
+                  <svg width="10" height="10" viewBox="0 0 16 16" fill="none" style={{ opacity: 0.6, flexShrink: 0 }}>
+                    <path d="M2 4h5l2 2h5v7H2V4z" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinejoin="round"/>
+                  </svg>
+                  {cwd}
+                </div>
+                <div className="agent-provider" style={{ fontSize: 10, display: 'flex', alignItems: 'center', gap: 4, opacity: 0.8 }}>
+                  <span className={`status-dot ${status || 'offline'}`} style={{ width: 6, height: 6 }} />
+                  {status === 'online' ? 'Connected' : status === 'checking' ? 'Checking...' : 'Disconnected'}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="chat-messages" ref={chatAreaRef}>
+            {messages.length === 0 && !loading && (
+              <div className="chat-empty">
+                <div className="chat-empty-icon">
+                  <div className={`agent-avatar ${agent.providerClass}`} style={{ width: 36, height: 36, fontSize: 12 }}>
+                    {agent.emoji}
+                  </div>
+                </div>
+                <div className="chat-empty-title">
+                  {agent.provider === 'terminal-ssh'
+                    ? `SSH Terminal \u2014 ${agent.sshUser || 'root'}@${agent.sshHost || '...'}`
+                    : 'Local Terminal'}
+                </div>
+                <div className="chat-empty-hint">
+                  Type a command and press <span className="chat-empty-kbd">Enter</span> to run it
+                </div>
+                <div className="chat-empty-hint" style={{ marginTop: 4, fontSize: 11 }}>
+                  <span className="chat-empty-kbd">\u2191</span> / <span className="chat-empty-kbd">\u2193</span> for history &nbsp; <span className="chat-empty-kbd">Ctrl+C</span> to kill &nbsp; <code>clear</code> to reset
+                </div>
+              </div>
+            )}
+            {messages.map((msg, i) => (
+              <div key={i} className={`msg ${msg.role} ${msg.role === 'assistant' ? 'terminal-output' : ''}`}>
+                {msg.role === 'user' && <span className="terminal-prompt">$</span>}
+                {msg.role === 'assistant' ? (
+                  <>
+                    <pre className="terminal-pre">{msg.content}</pre>
+                    {typeof msg.exitCode === 'number' && msg.exitCode !== 0 && (
+                      <div className="terminal-exit-code error">exit {msg.exitCode}</div>
+                    )}
+                  </>
+                ) : (
+                  <span className={msg.role === 'user' ? 'terminal-cmd' : ''}>{msg.content}</span>
+                )}
+              </div>
+            ))}
+            {loading && displayOutput && (
+              <div className="msg assistant terminal-output">
+                <pre className="terminal-pre">{displayOutput}</pre>
+                <span className="streaming-indicator"><span /><span /><span /></span>
+              </div>
+            )}
+            {loading && !displayOutput && (
+              <div className="typing-indicator">
+                <span /><span /><span />
+              </div>
+            )}
+            <div ref={bottomRef} />
+          </div>
+
+          <div className="chat-input-bar">
+            <div className="chat-input-wrap terminal-input-wrap">
+              <span className="terminal-input-prompt">$</span>
+              <textarea
+                ref={inputRef}
+                className="chat-input terminal-input"
+                rows={1}
+                placeholder="Enter command..."
+                value={input}
+                onChange={e => {
+                  setInput(e.target.value);
+                  setHistoryIdx(-1);
+                  const el = e.target;
+                  el.style.height = 'auto';
+                  el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+                }}
+                onKeyDown={onKeyDown}
+              />
+              {loading ? (
+                <button className="btn-send btn-kill" onClick={handleKill} title="Kill process (Ctrl+C)">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                    <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                  </svg>
+                </button>
+              ) : (
+                <button className="btn-send" onClick={sendCommand} disabled={!input.trim()}>
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 3l5 5h-3.5v5h-3V8H3l5-5z" fill="currentColor"/></svg>
+                </button>
+              )}
+            </div>
+          </div>
+        </>
+      );
+    }
+
     // ── Agent Presets ──
     const PRESETS = [
       { name: 'Claude Code (Local)', emoji: 'CC', provider: 'claude-code', model: '', workDir: '', providerClass: 'provider-claude-code', desc: 'Local Claude Code CLI instance' },
@@ -3009,6 +3401,8 @@
       { name: 'Hermes (SSH)', emoji: 'H', provider: 'hermes', sshHost: '', sshUser: 'root', model: '', providerClass: 'provider-hermes', desc: 'Hermes on a remote VPS' },
       { name: 'Codex (Local)', emoji: 'CX', provider: 'codex', model: '', skipGitRepoCheck: true, providerClass: 'provider-codex', desc: 'Local OpenAI Codex CLI agent' },
       { name: 'Codex (SSH)', emoji: 'CX', provider: 'codex-ssh', sshHost: '', sshUser: 'root', model: '', skipGitRepoCheck: true, providerClass: 'provider-codex', desc: 'Codex on a remote server' },
+      { name: 'Terminal (Local)', emoji: '>', provider: 'terminal', workDir: '', providerClass: 'provider-terminal', desc: 'Local shell terminal' },
+      { name: 'Terminal (SSH)', emoji: '>', provider: 'terminal-ssh', sshHost: '', sshUser: 'root', providerClass: 'provider-terminal', desc: 'SSH remote terminal' },
     ];
 
     // ── Settings Modal ──
@@ -3032,6 +3426,8 @@
         'openai': 'provider-openai',
         'codex': 'provider-codex',
         'codex-ssh': 'provider-codex',
+        'terminal': 'provider-terminal',
+        'terminal-ssh': 'provider-terminal',
       };
 
       const handleSave = () => {
@@ -3145,6 +3541,8 @@
                     <option value="hermes">Hermes (SSH)</option>
                     <option value="codex">Codex (Local)</option>
                     <option value="codex-ssh">Codex (SSH)</option>
+                    <option value="terminal">Terminal (Local)</option>
+                    <option value="terminal-ssh">Terminal (SSH)</option>
                     <option value="openai-compat">OpenAI Compatible (vLLM, etc.)</option>
                   </select>
                 </div>
@@ -3447,6 +3845,45 @@
                   </>
                 )}
 
+                {form.provider === 'terminal' && (
+                  <>
+                    <div className="form-row">
+                      <label>Starting Directory</label>
+                      <input value={form.workDir || ''} onChange={e => setForm(f => ({ ...f, workDir: e.target.value }))} placeholder="e.g. ~/projects (blank = home dir)" />
+                      <div style={{ fontSize: 11, color: 'var(--text-2)', marginTop: 4 }}>
+                        The terminal will start in this directory
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {form.provider === 'terminal-ssh' && (
+                  <>
+                    <div className="form-row">
+                      <label>SSH Host</label>
+                      <input value={form.sshHost || ''} onChange={e => setForm(f => ({ ...f, sshHost: e.target.value }))} placeholder="your-server.com or IP address" />
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <div className="form-row" style={{ flex: 1 }}>
+                        <label>SSH User</label>
+                        <input value={form.sshUser || ''} onChange={e => setForm(f => ({ ...f, sshUser: e.target.value }))} placeholder="root" />
+                      </div>
+                      <div className="form-row" style={{ flex: 1 }}>
+                        <label>SSH Port</label>
+                        <input type="number" value={form.sshPort || 22} onChange={e => setForm(f => ({ ...f, sshPort: parseInt(e.target.value) || 22 }))} />
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <label>SSH Key Path (optional)</label>
+                      <input value={form.sshKey || ''} onChange={e => setForm(f => ({ ...f, sshKey: e.target.value }))} placeholder="~/.ssh/id_rsa (blank = default key)" />
+                    </div>
+                    <div className="form-row">
+                      <label>Starting Directory on Remote</label>
+                      <input value={form.workDir || ''} onChange={e => setForm(f => ({ ...f, workDir: e.target.value }))} placeholder="e.g. /root/projects (blank = home dir)" />
+                    </div>
+                  </>
+                )}
+
                 <h3>Test Connection</h3>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <button className="btn btn-test" onClick={handleTest} disabled={testStatus === 'testing'}>
@@ -3462,7 +3899,7 @@
                   <div className="test-result testing">Connecting...</div>
                 )}
 
-                <h3>Behavior</h3>
+                {!isTerminalProvider(form.provider) && <h3>Behavior</h3>}
                 {form.provider === 'openai-compat' && (
                   <div className="form-row">
                     <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
