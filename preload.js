@@ -55,21 +55,16 @@ contextBridge.exposeInMainWorld('agentHub', {
   // Legacy (kept for compat, redirects to in-app auth)
   openAuthTerminal: (agent) => ipcRenderer.invoke('agent:open-auth-terminal', agent),
 
-  // Terminal
-  terminalInit: (agent) => ipcRenderer.invoke('terminal:init', agent),
-  terminalExec: (requestId, agent, command) => ipcRenderer.send('terminal:exec', requestId, agent, command),
-  terminalStdin: (agentId, data) => ipcRenderer.send('terminal:stdin', agentId, data),
+  // Terminal (real PTY via xterm.js)
+  terminalSpawn: (agent) => ipcRenderer.invoke('terminal:spawn', agent),
+  terminalInput: (agentId, data) => ipcRenderer.send('terminal:input', agentId, data),
+  terminalResize: (agentId, cols, rows) => ipcRenderer.send('terminal:resize', agentId, cols, rows),
   terminalKill: (agentId) => ipcRenderer.invoke('terminal:kill', agentId),
-  terminalComplete: (agent, inputText) => ipcRenderer.invoke('terminal:complete', agent, inputText),
-  onTerminalOutput: (cb) => { const h = (_e, id, text) => cb(id, text); ipcRenderer.on('terminal:output', h); return () => ipcRenderer.removeListener('terminal:output', h); },
-  onTerminalCwd: (cb) => { const h = (_e, id, cwd) => cb(id, cwd); ipcRenderer.on('terminal:cwd', h); return () => ipcRenderer.removeListener('terminal:cwd', h); },
-  onTerminalDone: (cb) => { const h = (_e, id, meta) => cb(id, meta); ipcRenderer.on('terminal:done', h); return () => ipcRenderer.removeListener('terminal:done', h); },
-  onTerminalError: (cb) => { const h = (_e, id, err) => cb(id, err); ipcRenderer.on('terminal:error', h); return () => ipcRenderer.removeListener('terminal:error', h); },
+  onTerminalData: (cb) => { const h = (_e, id, data) => cb(id, data); ipcRenderer.on('terminal:data', h); return () => ipcRenderer.removeListener('terminal:data', h); },
+  onTerminalExit: (cb) => { const h = (_e, id, code) => cb(id, code); ipcRenderer.on('terminal:exit', h); return () => ipcRenderer.removeListener('terminal:exit', h); },
   removeTerminalListeners: () => {
-    ipcRenderer.removeAllListeners('terminal:output');
-    ipcRenderer.removeAllListeners('terminal:cwd');
-    ipcRenderer.removeAllListeners('terminal:done');
-    ipcRenderer.removeAllListeners('terminal:error');
+    ipcRenderer.removeAllListeners('terminal:data');
+    ipcRenderer.removeAllListeners('terminal:exit');
   },
 
   // Theme

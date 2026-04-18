@@ -8,6 +8,16 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://unpkg.com/marked@14/marked.min.js"></script>
+  <link rel="stylesheet" href="./node_modules/xterm/css/xterm.css" />
+  <script>
+    // Ensure xterm UMD loads as browser globals (not CJS) even if Electron leaks module/exports
+    if (typeof module !== 'undefined') { window.__nodeModule = module; window.__nodeExports = exports; module = undefined; exports = undefined; }
+  </script>
+  <script src="./node_modules/xterm/lib/xterm.js"></script>
+  <script src="./node_modules/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
+  <script>
+    if (window.__nodeModule) { module = window.__nodeModule; exports = window.__nodeExports; delete window.__nodeModule; delete window.__nodeExports; }
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
@@ -1022,103 +1032,92 @@
     .btn-attach:hover { background: var(--border-light); color: var(--text-1); }
     .btn-attach:active { opacity: 0.8; }
 
-    /* ── Terminal ── */
-    .terminal-messages .msg {
-      animation-duration: 0.08s;
+    /* ── Terminal (xterm.js) ── */
+    .xterm-wrapper {
+      flex: 1;
+      min-height: 0;
+      padding: 0;
+      position: relative;
+      overflow: hidden;
     }
-
-    .terminal-cwd {
-      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
-      font-size: 11px;
-      color: var(--text-2);
+    .xterm-wrapper .xterm {
+      height: 100%;
+      padding: 8px 4px 8px 12px;
+    }
+    .xterm-wrapper .xterm-viewport {
+      border-radius: 0;
+    }
+    .terminal-topbar {
       display: flex;
       align-items: center;
-      gap: 4px;
-      max-width: 400px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      padding: 2px 8px;
-      background: var(--bg-2);
-      border-radius: var(--radius-sm);
-      border: 1px solid var(--border);
-    }
-
-    .terminal-output .terminal-pre {
-      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
-      font-size: 13px;
-      line-height: 1.45;
-      white-space: pre-wrap;
-      word-break: break-all;
-      margin: 0;
-      background: none;
-      color: inherit;
-    }
-
-    .msg.user .terminal-prompt {
-      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
-      opacity: 0.6;
-      margin-right: 6px;
-      font-size: 13px;
-    }
-
-    .msg.user .terminal-cmd {
-      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
-      font-size: 13px;
-    }
-
-    .msg.stdin-msg {
-      align-self: flex-end;
-      background: var(--bg-3);
-      border-radius: 16px 16px 4px 16px;
-      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
-      font-size: 13px;
-      color: var(--text-1);
-      max-width: 75%;
-    }
-
-    .terminal-input-wrap {
-      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
-    }
-
-    .terminal-input-prompt {
-      color: var(--text-2);
-      font-size: 14px;
-      line-height: 1;
-      padding: 6px 0;
-      flex-shrink: 0;
+      gap: 8px;
+      padding: 10px 16px;
+      background: var(--bg-1);
+      border-bottom: 1px solid var(--border);
+      -webkit-app-region: drag;
       user-select: none;
+      min-height: 44px;
     }
-
-    .terminal-input-prompt.stdin-mode {
-      color: var(--orange);
+    .terminal-topbar-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-0);
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
-
-    .terminal-input {
-      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace !important;
-      font-size: 14px !important;
+    .terminal-topbar-subtitle {
+      font-size: 11px;
+      color: var(--text-2);
+      font-family: 'JetBrains Mono', monospace;
     }
-
-    .btn-kill {
-      background: var(--red) !important;
+    .terminal-topbar-actions {
+      margin-left: auto;
+      display: flex;
+      gap: 6px;
+      -webkit-app-region: no-drag;
     }
-    .btn-kill:hover { background: #e63329 !important; }
-
-    .terminal-exit-code {
-      display: inline-block;
-      font-family: 'JetBrains Mono', 'SF Mono', monospace;
-      font-size: 10px;
-      padding: 1px 5px;
-      border-radius: 3px;
-      margin-top: 4px;
+    .terminal-topbar-actions button {
+      background: var(--bg-3);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-1);
+      font-size: 11px;
+      padding: 3px 10px;
+      cursor: pointer;
+      transition: all 0.15s;
     }
-    .terminal-exit-code.success {
-      color: var(--green);
-      background: var(--green-dim);
+    .terminal-topbar-actions button:hover {
+      background: var(--bg-4);
+      color: var(--text-0);
     }
-    .terminal-exit-code.error {
-      color: var(--red);
-      background: var(--red-dim);
+    .terminal-status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .terminal-status-dot.online { background: var(--green); box-shadow: 0 0 4px var(--green); }
+    .terminal-status-dot.offline { background: var(--text-2); }
+    .terminal-status-dot.checking { background: var(--orange); animation: pulse 1s infinite; }
+    .terminal-exited-banner {
+      text-align: center;
+      padding: 8px;
+      font-size: 12px;
+      color: var(--text-2);
+      background: var(--bg-1);
+      border-top: 1px solid var(--border);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .terminal-exited-banner button {
+      margin-left: 8px;
+      background: var(--accent);
+      border: none;
+      border-radius: 6px;
+      color: #fff;
+      font-size: 11px;
+      padding: 3px 12px;
+      cursor: pointer;
     }
 
     .selected-images {
@@ -1795,17 +1794,6 @@
                       agent={ag}
                       isActive={activeId === ag.id}
                       status={statuses[ag.id]}
-                      messages={chats[ag.id] || []}
-                      setMessages={(msgs) => setChats(prev => ({ ...prev, [ag.id]: typeof msgs === 'function' ? msgs(prev[ag.id] || []) : msgs }))}
-                      onLoadingChange={(isLoading) => {
-                        setLoadingAgents(prev => {
-                          const next = new Set(prev);
-                          if (isLoading) next.add(ag.id);
-                          else next.delete(ag.id);
-                          return next;
-                        });
-                      }}
-                      setLastActivityTime={setLastActivityTime}
                     />
                   ) : (
                     <ChatView
@@ -3125,428 +3113,202 @@
       );
     }
 
-    // ── Terminal View ──
-    function TerminalView({ agent, isActive, status, messages, setMessages, onLoadingChange, setLastActivityTime }) {
-      const [input, setInput] = useState('');
-      const [loading, setLoading] = useState(false);
-      const [streamOutput, setStreamOutput] = useState('');
-      const [cwd, setCwd] = useState('~');
-      const [initialized, setInitialized] = useState(false);
-      const [history, setHistory] = useState([]);
-      const [historyIdx, setHistoryIdx] = useState(-1);
-      const [completions, setCompletions] = useState([]);
-      const [completionIdx, setCompletionIdx] = useState(0);
-      const [showCompletions, setShowCompletions] = useState(false);
-      const bottomRef = useRef(null);
-      const inputRef = useRef(null);
-      const chatAreaRef = useRef(null);
-      const streamOutputRef = useRef('');
-      const activeRequestIdRef = useRef(null);
-      const loadingRef = useRef(false);
-      const rafRef = useRef(null);
-      const tabCountRef = useRef(0);
-      const lastTabPartialRef = useRef('');
+    // ── Terminal View (xterm.js) ──
+    function TerminalView({ agent, isActive, status }) {
+      const containerRef = useRef(null);
+      const xtermRef = useRef(null);
+      const fitAddonRef = useRef(null);
+      const spawnedRef = useRef(false);
+      const openedRef = useRef(false);
+      const [exited, setExited] = useState(false);
 
-      // Initialize terminal session
+      const isDark = () => document.documentElement.classList.contains('dark') || window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+      const darkTheme = {
+        background: '#0a0a0f',
+        foreground: '#e0e0e0',
+        cursor: '#7c6aff',
+        cursorAccent: '#0a0a0f',
+        selectionBackground: 'rgba(124,106,255,0.3)',
+        selectionForeground: '#ffffff',
+        black: '#1a1a2e',
+        red: '#ff6b6b',
+        green: '#51cf66',
+        yellow: '#ffd43b',
+        blue: '#74b0ff',
+        magenta: '#cc5de8',
+        cyan: '#22b8cf',
+        white: '#e0e0e0',
+        brightBlack: '#555577',
+        brightRed: '#ff8787',
+        brightGreen: '#69db7c',
+        brightYellow: '#ffe066',
+        brightBlue: '#91c4ff',
+        brightMagenta: '#da77f2',
+        brightCyan: '#3bc9db',
+        brightWhite: '#ffffff',
+      };
+
+      const lightTheme = {
+        background: '#f5f5f7',
+        foreground: '#1a1a2e',
+        cursor: '#7c6aff',
+        cursorAccent: '#ffffff',
+        selectionBackground: 'rgba(124,106,255,0.2)',
+        selectionForeground: '#000000',
+        black: '#1a1a2e',
+        red: '#d63031',
+        green: '#00b894',
+        yellow: '#cc8800',
+        blue: '#0A84FF',
+        magenta: '#a855f7',
+        cyan: '#0891b2',
+        white: '#d0d0d0',
+        brightBlack: '#7f8c8d',
+        brightRed: '#e74c3c',
+        brightGreen: '#2ecc71',
+        brightYellow: '#f39c12',
+        brightBlue: '#3498db',
+        brightMagenta: '#9b59b6',
+        brightCyan: '#1abc9c',
+        brightWhite: '#2d3436',
+      };
+
+      // Create xterm and spawn PTY
       useEffect(() => {
-        window.agentHub.terminalInit(agent).then(res => {
-          if (res.cwd) setCwd(res.cwd);
-          setInitialized(true);
+        const term = new Terminal({
+          cursorBlink: true,
+          cursorStyle: 'bar',
+          fontSize: 14,
+          fontFamily: "'JetBrains Mono', 'SF Mono', 'Menlo', 'Monaco', monospace",
+          fontWeight: 400,
+          lineHeight: 1.2,
+          letterSpacing: 0,
+          theme: isDark() ? darkTheme : lightTheme,
+          allowProposedApi: true,
+          scrollback: 10000,
+          macOptionIsMeta: true,
+          macOptionClickForcesSelection: true,
         });
-      }, [agent.id]);
+        const fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+        xtermRef.current = term;
+        fitAddonRef.current = fitAddon;
 
-      // Scroll to bottom - instant for snappy feel
-      useEffect(() => {
-        bottomRef.current?.scrollIntoView({ behavior: 'auto' });
-      }, [messages, streamOutput]);
+        // Listen for theme changes
+        const onTheme = (dark) => {
+          term.options.theme = dark ? darkTheme : lightTheme;
+        };
+        window.agentHub.onThemeChange(onTheme);
 
-      // Focus input
-      useEffect(() => {
-        if (isActive) inputRef.current?.focus();
-      }, [agent.id, isActive]);
-
-      // Set up terminal listeners
-      useEffect(() => {
-        let cancelled = false;
-
-        const offOutput = window.agentHub.onTerminalOutput((id, text) => {
-          if (cancelled || id !== activeRequestIdRef.current) return;
-          streamOutputRef.current += text;
-          // Throttle React updates to animation frames for smooth high-throughput output
-          if (!rafRef.current) {
-            rafRef.current = requestAnimationFrame(() => {
-              rafRef.current = null;
-              if (!cancelled) setStreamOutput(streamOutputRef.current);
-            });
-          }
+        // Send keystrokes to backend
+        term.onData(data => {
+          window.agentHub.terminalInput(agent.id, data);
         });
 
-        const offDone = window.agentHub.onTerminalDone((id, meta) => {
-          if (cancelled || id !== activeRequestIdRef.current) return;
-          // Cancel any pending rAF
-          if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
-
-          let finalOutput = streamOutputRef.current;
-          // Strip CWD marker and everything after it
-          const markerIdx = finalOutput.indexOf('___AGHUB_CWD___');
-          if (markerIdx !== -1) {
-            finalOutput = finalOutput.substring(0, markerIdx);
-          }
-          finalOutput = finalOutput.replace(/\n+$/, '');
-
-          if (meta.cwd) setCwd(meta.cwd);
-
-          if (finalOutput) {
-            setMessages(prev => [...prev, {
-              role: 'assistant',
-              content: finalOutput,
-              exitCode: meta.exitCode,
-            }]);
-          } else if (meta.exitCode && meta.exitCode !== 0) {
-            setMessages(prev => [...prev, {
-              role: 'error',
-              content: `Exited with code ${meta.exitCode}`,
-            }]);
-          }
-
-          streamOutputRef.current = '';
-          setStreamOutput('');
-          setLoading(false);
-          loadingRef.current = false;
-          onLoadingChange?.(false);
-          activeRequestIdRef.current = null;
+        // Receive output from PTY
+        const offData = window.agentHub.onTerminalData((id, data) => {
+          if (id === agent.id) term.write(data);
         });
 
-        const offError = window.agentHub.onTerminalError((id, err) => {
-          if (cancelled || id !== activeRequestIdRef.current) return;
-          if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
-          setMessages(prev => [...prev, { role: 'error', content: err }]);
-          streamOutputRef.current = '';
-          setStreamOutput('');
-          setLoading(false);
-          loadingRef.current = false;
-          onLoadingChange?.(false);
-          activeRequestIdRef.current = null;
+        // Handle PTY exit
+        const offExit = window.agentHub.onTerminalExit((id, code) => {
+          if (id === agent.id) {
+            term.write(`\r\n\x1b[90m[Process exited with code ${code}]\x1b[0m\r\n`);
+            setExited(true);
+            spawnedRef.current = false;
+          }
         });
 
         return () => {
-          cancelled = true;
-          if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
-          offOutput();
-          offDone();
-          offError();
+          offData();
+          offExit();
+          term.dispose();
+          xtermRef.current = null;
+          fitAddonRef.current = null;
+          // Kill PTY on unmount
+          window.agentHub.terminalKill(agent.id);
         };
       }, [agent.id]);
 
-      const handleSend = () => {
-        const text = input.trim();
-        if (!text) return;
+      // Open + spawn when first activated (container must be visible for dimensions)
+      useEffect(() => {
+        if (!isActive || !xtermRef.current || !containerRef.current) return;
 
-        // If a command is already running, forward input as stdin
-        if (loadingRef.current) {
-          window.agentHub.terminalStdin(agent.id, text + '\n');
-          // Show what was sent as a dimmer stdin message
-          setMessages(prev => [...prev, { role: 'stdin', content: text }]);
-          setInput('');
-          if (inputRef.current) inputRef.current.style.height = 'auto';
-          return;
+        if (!openedRef.current) {
+          xtermRef.current.open(containerRef.current);
+          fitAddonRef.current.fit();
+          openedRef.current = true;
         }
 
-        // Handle clear locally
-        if (text === 'clear') {
-          setMessages([]);
-          setInput('');
-          return;
-        }
-
-        setMessages(prev => [...prev, { role: 'user', content: text }]);
-        setHistory(prev => [text, ...prev.filter(h => h !== text)].slice(0, 100));
-        setHistoryIdx(-1);
-        setInput('');
-        if (inputRef.current) inputRef.current.style.height = 'auto';
-
-        streamOutputRef.current = '';
-        setStreamOutput('');
-        setLoading(true);
-        loadingRef.current = true;
-        onLoadingChange?.(true);
-
-        const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2);
-        activeRequestIdRef.current = requestId;
-
-        if (setLastActivityTime) {
-          setLastActivityTime(prev => ({ ...prev, [agent.id]: Date.now() }));
-        }
-
-        window.agentHub.terminalExec(requestId, agent, text);
-      };
-
-      const handleKill = () => {
-        window.agentHub.terminalKill(agent.id);
-      };
-
-      const applyCompletion = (completion) => {
-        const parts = input.split(/\s+/);
-        const partial = parts[parts.length - 1] || '';
-        // Replace the last partial word with the completion
-        const prefix = input.substring(0, input.length - partial.length);
-        const needsSpace = !completion.endsWith('/');
-        setInput(prefix + completion + (needsSpace ? ' ' : ''));
-        setShowCompletions(false);
-        setCompletions([]);
-        tabCountRef.current = 0;
-        lastTabPartialRef.current = '';
-        inputRef.current?.focus();
-      };
-
-      const onKeyDown = (e) => {
-        // Reset tab count on any non-tab key
-        if (e.key !== 'Tab') {
-          tabCountRef.current = 0;
-          lastTabPartialRef.current = '';
-        }
-
-        // Escape closes completion palette
-        if (e.key === 'Escape' && showCompletions) {
-          e.preventDefault();
-          setShowCompletions(false);
-          setCompletions([]);
-          return;
-        }
-
-        // When completion palette is open, arrow keys navigate it
-        if (showCompletions && completions.length > 0) {
-          if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            setCompletionIdx(prev => (prev + 1) % completions.length);
-            return;
-          }
-          if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            setCompletionIdx(prev => (prev - 1 + completions.length) % completions.length);
-            return;
-          }
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            applyCompletion(completions[completionIdx]);
-            return;
-          }
-        }
-
-        // Tab completion
-        if (e.key === 'Tab' && !loadingRef.current) {
-          e.preventDefault();
-          const text = input;
-          if (!text) return;
-
-          tabCountRef.current++;
-
-          // If palette is already showing, cycle through completions
-          if (showCompletions && completions.length > 0) {
-            setCompletionIdx(prev => e.shiftKey
-              ? (prev - 1 + completions.length) % completions.length
-              : (prev + 1) % completions.length
-            );
-            return;
-          }
-
-          window.agentHub.terminalComplete(agent, text).then(res => {
-            if (!res.completions || res.completions.length === 0) return;
-
-            if (res.completions.length === 1) {
-              // Single match: apply immediately
-              applyCompletion(res.completions[0]);
-            } else {
-              // Multiple matches: find common prefix first
-              const common = res.completions.reduce((a, b) => {
-                let i = 0;
-                while (i < a.length && i < b.length && a[i] === b[i]) i++;
-                return a.substring(0, i);
-              });
-
-              if (common.length > res.partial.length) {
-                // Fill common prefix
-                const parts = input.split(/\s+/);
-                const partial = parts[parts.length - 1] || '';
-                const prefix = input.substring(0, input.length - partial.length);
-                setInput(prefix + common);
-                lastTabPartialRef.current = common;
-              }
-
-              // Show palette (first tab fills prefix, always show palette for multiple)
-              setCompletions(res.completions);
-              setCompletionIdx(0);
-              setShowCompletions(true);
-            }
+        if (!spawnedRef.current) {
+          spawnedRef.current = true;
+          setExited(false);
+          window.agentHub.terminalSpawn(agent).then(() => {
+            const dims = fitAddonRef.current.proposeDimensions();
+            if (dims) window.agentHub.terminalResize(agent.id, dims.cols, dims.rows);
           });
-          return;
         }
 
-        if (e.key === 'Enter' && !e.shiftKey) {
-          e.preventDefault();
-          setShowCompletions(false);
-          setCompletions([]);
-          handleSend();
-          return;
+        // Fit and focus
+        setTimeout(() => {
+          fitAddonRef.current?.fit();
+          xtermRef.current?.focus();
+        }, 30);
+      }, [isActive]);
+
+      // Handle window resize
+      useEffect(() => {
+        const onResize = () => {
+          if (!isActive || !fitAddonRef.current) return;
+          fitAddonRef.current.fit();
+          const dims = fitAddonRef.current.proposeDimensions();
+          if (dims) window.agentHub.terminalResize(agent.id, dims.cols, dims.rows);
+        };
+        window.addEventListener('resize', onResize);
+        return () => window.removeEventListener('resize', onResize);
+      }, [isActive, agent.id]);
+
+      const handleRestart = () => {
+        if (xtermRef.current) {
+          xtermRef.current.clear();
+          xtermRef.current.reset();
         }
-        // Ctrl+C to kill running process
-        if (e.key === 'c' && e.ctrlKey && loadingRef.current) {
-          e.preventDefault();
-          handleKill();
-          return;
-        }
-        // Command history with up/down arrows (only when not running and palette not open)
-        if (!loadingRef.current && !showCompletions && e.key === 'ArrowUp' && history.length > 0) {
-          e.preventDefault();
-          const newIdx = Math.min(historyIdx + 1, history.length - 1);
-          setHistoryIdx(newIdx);
-          setInput(history[newIdx]);
-          return;
-        }
-        if (!loadingRef.current && !showCompletions && e.key === 'ArrowDown') {
-          e.preventDefault();
-          if (historyIdx <= 0) {
-            setHistoryIdx(-1);
-            setInput('');
-          } else {
-            const newIdx = historyIdx - 1;
-            setHistoryIdx(newIdx);
-            setInput(history[newIdx]);
-          }
-          return;
-        }
+        setExited(false);
+        spawnedRef.current = true;
+        window.agentHub.terminalSpawn(agent).then(() => {
+          const dims = fitAddonRef.current?.proposeDimensions();
+          if (dims) window.agentHub.terminalResize(agent.id, dims.cols, dims.rows);
+          xtermRef.current?.focus();
+        });
       };
-
-      // Strip marker from streaming display
-      const displayOutput = (() => {
-        const idx = streamOutput.indexOf('___AGHUB_CWD___');
-        if (idx !== -1) return streamOutput.substring(0, idx).replace(/\n+$/, '');
-        return streamOutput;
-      })();
 
       return (
         <>
-          <div className="chat-header">
-            <div className="chat-header-top">
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-                <div className={`agent-avatar ${agent.providerClass}`} style={{ width: 34, height: 34, fontSize: 12 }}>
-                  {agent.emoji}
-                </div>
-                <div className="agent-name">{agent.name}</div>
-                <div className="terminal-cwd" title={cwd}>
-                  <svg width="10" height="10" viewBox="0 0 16 16" fill="none" style={{ opacity: 0.6, flexShrink: 0 }}>
-                    <path d="M2 4h5l2 2h5v7H2V4z" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinejoin="round"/>
-                  </svg>
-                  {cwd}
-                </div>
-                <div className="agent-provider" style={{ fontSize: 10, display: 'flex', alignItems: 'center', gap: 4, opacity: 0.8 }}>
-                  <span className={`status-dot ${status || 'offline'}`} style={{ width: 6, height: 6 }} />
-                  {status === 'online' ? 'Connected' : status === 'checking' ? 'Checking...' : 'Disconnected'}
-                </div>
-              </div>
+          <div className="terminal-topbar">
+            <div className="terminal-topbar-title">
+              <span className={`terminal-status-dot ${status || 'offline'}`} />
+              {agent.name}
+            </div>
+            <span className="terminal-topbar-subtitle">
+              {agent.provider === 'terminal-ssh'
+                ? `${agent.sshUser || 'root'}@${agent.sshHost || '...'}`
+                : 'local'}
+            </span>
+            <div className="terminal-topbar-actions">
+              <button onClick={() => { xtermRef.current?.clear(); xtermRef.current?.focus(); }}>Clear</button>
+              <button onClick={handleRestart}>Restart</button>
             </div>
           </div>
-
-          <div className="chat-messages terminal-messages" ref={chatAreaRef}>
-            {messages.length === 0 && !loading && (
-              <div className="chat-empty">
-                <div className="chat-empty-icon">
-                  <div className={`agent-avatar ${agent.providerClass}`} style={{ width: 36, height: 36, fontSize: 12 }}>
-                    {agent.emoji}
-                  </div>
-                </div>
-                <div className="chat-empty-title">
-                  {agent.provider === 'terminal-ssh'
-                    ? `SSH Terminal \u2014 ${agent.sshUser || 'root'}@${agent.sshHost || '...'}`
-                    : 'Local Terminal'}
-                </div>
-                <div className="chat-empty-hint">
-                  Type a command and press <span className="chat-empty-kbd">Enter</span> to run it
-                </div>
-                <div className="chat-empty-hint" style={{ marginTop: 4, fontSize: 11 }}>
-                  <span className="chat-empty-kbd">{'\u2191'}</span> / <span className="chat-empty-kbd">{'\u2193'}</span> history &nbsp; <span className="chat-empty-kbd">Tab</span> complete &nbsp; <span className="chat-empty-kbd">Ctrl+C</span> kill &nbsp; <code>clear</code> reset
-                </div>
-              </div>
-            )}
-            {messages.map((msg, i) => (
-              <div key={i} className={`msg ${msg.role === 'stdin' ? 'stdin-msg' : msg.role} ${msg.role === 'assistant' ? 'terminal-output' : ''}`}>
-                {msg.role === 'user' && <span className="terminal-prompt">$</span>}
-                {msg.role === 'stdin' && <span className="terminal-prompt" style={{ opacity: 0.4 }}>{'>'}</span>}
-                {msg.role === 'assistant' ? (
-                  <>
-                    <pre className="terminal-pre">{msg.content}</pre>
-                    {typeof msg.exitCode === 'number' && msg.exitCode !== 0 && (
-                      <div className="terminal-exit-code error">exit {msg.exitCode}</div>
-                    )}
-                  </>
-                ) : (
-                  <span className={msg.role === 'user' ? 'terminal-cmd' : ''}>{msg.content}</span>
-                )}
-              </div>
-            ))}
-            {loading && displayOutput && (
-              <div className="msg assistant terminal-output">
-                <pre className="terminal-pre">{displayOutput}</pre>
-                <span className="streaming-indicator"><span /><span /><span /></span>
-              </div>
-            )}
-            {loading && !displayOutput && (
-              <div className="typing-indicator">
-                <span /><span /><span />
-              </div>
-            )}
-            <div ref={bottomRef} />
-          </div>
-
-          <div className="chat-input-bar">
-            <div className="chat-input-wrap terminal-input-wrap" style={{ position: 'relative' }}>
-              {showCompletions && completions.length > 0 && (
-                <div className="slash-palette" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-                  {completions.map((c, i) => (
-                    <div
-                      key={c}
-                      className={`slash-palette-item ${i === completionIdx ? 'selected' : ''}`}
-                      onClick={() => applyCompletion(c)}
-                      onMouseEnter={() => setCompletionIdx(i)}
-                    >
-                      <span className="slash-palette-item-name">{c}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <span className={`terminal-input-prompt ${loading ? 'stdin-mode' : ''}`}>
-                {loading ? '>' : '$'}
-              </span>
-              <textarea
-                ref={inputRef}
-                className="chat-input terminal-input"
-                rows={1}
-                placeholder={loading ? 'Type input for running process...' : 'Enter command...'}
-                value={input}
-                onChange={e => {
-                  setInput(e.target.value);
-                  if (!loadingRef.current) setHistoryIdx(-1);
-                  // Close completion palette on manual typing
-                  if (showCompletions) { setShowCompletions(false); setCompletions([]); }
-                  const el = e.target;
-                  el.style.height = 'auto';
-                  el.style.height = Math.min(el.scrollHeight, 200) + 'px';
-                }}
-                onKeyDown={onKeyDown}
-              />
-              {loading ? (
-                <button className="btn-send btn-kill" onClick={handleKill} title="Kill process (Ctrl+C)">
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                    <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                  </svg>
-                </button>
-              ) : (
-                <button className="btn-send" onClick={handleSend} disabled={!input.trim()}>
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 3l5 5h-3.5v5h-3V8H3l5-5z" fill="currentColor"/></svg>
-                </button>
-              )}
+          <div className="xterm-wrapper" ref={containerRef}
+            onClick={() => xtermRef.current?.focus()}
+          />
+          {exited && (
+            <div className="terminal-exited-banner">
+              Shell exited
+              <button onClick={handleRestart}>Restart</button>
             </div>
-          </div>
+          )}
         </>
       );
     }
