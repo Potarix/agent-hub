@@ -3202,13 +3202,39 @@
         };
         window.agentHub.onThemeChange(onTheme);
 
-        // Intercept Shift+Enter and send ESC+CR so agent CLIs (Claude Code, Codex)
-        // insert a newline instead of submitting. xterm.js sends plain \r otherwise.
+        // Intercept Shift+Enter and macOS Cmd-key shortcuts so the terminal
+        // behaves like the native macOS Terminal.app (readline bindings).
         term.attachCustomKeyEventHandler((e) => {
-          if (e.type === 'keydown' && e.key === 'Enter' && e.shiftKey) {
-            window.agentHub.terminalInput(agent.id, '\x1b\r');
+          if (e.type !== 'keydown') return true;
+
+          const send = (seq) => {
+            window.agentHub.terminalInput(agent.id, seq);
+            e.preventDefault();
             return false;
+          };
+
+          // Shift+Enter → ESC+CR so agent CLIs (Claude Code, Codex) insert a
+          // newline instead of submitting. xterm.js sends plain \r otherwise.
+          if (e.key === 'Enter' && e.shiftKey) return send('\x1b\r');
+
+          // macOS Cmd shortcuts (Terminal.app parity). Cmd is never forwarded
+          // as a modifier to the PTY, so translate to readline control chars.
+          if (e.metaKey && !e.ctrlKey && !e.altKey) {
+            switch (e.key) {
+              case 'Backspace': return send('\x15'); // kill to start of line
+              case 'Delete':    return send('\x0b'); // kill to end of line
+              case 'ArrowLeft': return send('\x01'); // beginning of line
+              case 'ArrowRight':return send('\x05'); // end of line
+            }
           }
+
+          // Option+Arrows → word-wise motion. (Option+Backspace is handled
+          // natively via macOptionIsMeta, which emits ESC+DEL.)
+          if (e.altKey && !e.metaKey && !e.ctrlKey) {
+            if (e.key === 'ArrowLeft')  return send('\x1bb');
+            if (e.key === 'ArrowRight') return send('\x1bf');
+          }
+
           return true;
         });
 
