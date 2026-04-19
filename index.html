@@ -1794,6 +1794,7 @@
                       agent={ag}
                       isActive={activeId === ag.id}
                       status={statuses[ag.id]}
+                      setLastActivityTime={setLastActivityTime}
                     />
                   ) : (
                     <ChatView
@@ -3114,7 +3115,7 @@
     }
 
     // ── Terminal View (xterm.js) ──
-    function TerminalView({ agent, isActive, status }) {
+    function TerminalView({ agent, isActive, status, setLastActivityTime }) {
       const containerRef = useRef(null);
       const xtermRef = useRef(null);
       const fitAddonRef = useRef(null);
@@ -3202,8 +3203,15 @@
         window.agentHub.onThemeChange(onTheme);
 
         // Send keystrokes to backend
+        let lastActivityUpdate = 0;
         term.onData(data => {
           window.agentHub.terminalInput(agent.id, data);
+          // Update last activity time (debounced to avoid excessive re-renders)
+          const now = Date.now();
+          if (setLastActivityTime && now - lastActivityUpdate > 2000) {
+            lastActivityUpdate = now;
+            setLastActivityTime(prev => ({ ...prev, [agent.id]: now }));
+          }
         });
 
         // Receive output from PTY
