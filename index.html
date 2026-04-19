@@ -3202,6 +3202,16 @@
         };
         window.agentHub.onThemeChange(onTheme);
 
+        // Intercept Shift+Enter and send ESC+CR so agent CLIs (Claude Code, Codex)
+        // insert a newline instead of submitting. xterm.js sends plain \r otherwise.
+        term.attachCustomKeyEventHandler((e) => {
+          if (e.type === 'keydown' && e.key === 'Enter' && e.shiftKey) {
+            window.agentHub.terminalInput(agent.id, '\x1b\r');
+            return false;
+          }
+          return true;
+        });
+
         // Send keystrokes to backend
         let lastActivityUpdate = 0;
         term.onData(data => {
