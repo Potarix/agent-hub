@@ -1751,6 +1751,10 @@
       };
 
       const removeAgent = (id) => {
+        const agent = agents.find(a => a.id === id);
+        if (agent && isTerminalProvider(agent.provider)) {
+          window.agentHub.terminalKill(id);
+        }
         setAgents(prev => prev.filter(a => a.id !== id));
         setChats(prev => { const next = { ...prev }; delete next[id]; return next; });
         if (activeId === id) setActiveId(null);
@@ -3281,8 +3285,68 @@
           term.dispose();
           xtermRef.current = null;
           fitAddonRef.current = null;
-          // Kill PTY on unmount
-          window.agentHub.terminalKill(agent.id);
+          // Detach only — keep tmux session alive so claude/codex survive
+          // app close and reattach on next launch.
+          window.agentHub.terminalDetach(agent.id);
+        };
+      }, [agent.id]);
+
+      // Image drag-drop and clipboard-paste support.
+      // Claude Code / Codex read image references as plain file paths typed
+      // at the prompt, so we inject the path into the PTY on drop/paste.
+      useEffect(() => {
+        const el = containerRef.current;
+        if (!el) return;
+
+        // macOS Terminal.app-style escape: backslash space / quote / backslash.
+        const escapePath = (p) => String(p).replace(/([ "'\\])/g, '\\$1');
+
+        const writePaths = (paths) => {
+          const joined = paths.filter(Boolean).map(escapePath).join(' ');
+          if (!joined) return;
+          window.agentHub.terminalInput(agent.id, joined);
+          xtermRef.current?.focus();
+        };
+
+        const onDragOver = (e) => {
+          e.preventDefault();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+        };
+
+        const onDrop = (e) => {
+          const files = [...(e.dataTransfer?.files || [])];
+          if (files.length === 0) return;
+          e.preventDefault();
+          writePaths(files.map(f => f.path));
+        };
+
+        // Capture phase so we intercept before xterm.js writes the image
+        // bytes as garbled text into the PTY.
+        const onPaste = async (e) => {
+          const items = [...(e.clipboardData?.items || [])];
+          const imageItem = items.find(it => it.kind === 'file' && it.type.startsWith('image/'));
+          if (!imageItem) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const file = imageItem.getAsFile();
+          if (!file) return;
+          try {
+            const buf = new Uint8Array(await file.arrayBuffer());
+            const ext = imageItem.type.split('/')[1] || 'png';
+            const result = await window.agentHub.saveImageTemp(buf, ext);
+            if (result?.path) writePaths([result.path]);
+          } catch (err) {
+            console.error('paste image failed', err);
+          }
+        };
+
+        el.addEventListener('dragover', onDragOver);
+        el.addEventListener('drop', onDrop);
+        el.addEventListener('paste', onPaste, true);
+        return () => {
+          el.removeEventListener('dragover', onDragOver);
+          el.removeEventListener('drop', onDrop);
+          el.removeEventListener('paste', onPaste, true);
         };
       }, [agent.id]);
 

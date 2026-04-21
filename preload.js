@@ -60,6 +60,7 @@ contextBridge.exposeInMainWorld('agentHub', {
   terminalInput: (agentId, data) => ipcRenderer.send('terminal:input', agentId, data),
   terminalResize: (agentId, cols, rows) => ipcRenderer.send('terminal:resize', agentId, cols, rows),
   terminalKill: (agentId) => ipcRenderer.invoke('terminal:kill', agentId),
+  terminalDetach: (agentId) => ipcRenderer.invoke('terminal:detach', agentId),
   onTerminalData: (cb) => { const h = (_e, id, data) => cb(id, data); ipcRenderer.on('terminal:data', h); return () => ipcRenderer.removeListener('terminal:data', h); },
   onTerminalExit: (cb) => { const h = (_e, id, code) => cb(id, code); ipcRenderer.on('terminal:exit', h); return () => ipcRenderer.removeListener('terminal:exit', h); },
   removeTerminalListeners: () => {
@@ -73,4 +74,7 @@ contextBridge.exposeInMainWorld('agentHub', {
 
   // External links
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
+
+  // Save clipboard image to temp file, returns { path } or { error }
+  saveImageTemp: (data, ext) => ipcRenderer.invoke('image:save-temp', data, ext),
 });

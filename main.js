@@ -1,5 +1,7 @@
 const { app, BrowserWindow, ipcMain, nativeTheme, shell } = require('electron');
 const { spawn, spawnSync, execSync } = require('child_process');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const pty = require('node-pty');
 
@@ -72,6 +74,24 @@ ipcMain.handle('open-external', async (_event, url) => {
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
+  }
+});
+
+// ── Clipboard Image → Temp File IPC ──
+// Renderer sends image bytes (Uint8Array) from a paste event; we write to
+// a temp file and return the path so the renderer can inject it into the PTY.
+
+ipcMain.handle('image:save-temp', async (_event, data, ext) => {
+  try {
+    const buffer = Buffer.from(data);
+    const safeExt = String(ext || 'png').replace(/[^a-z0-9]/gi, '').slice(0, 8) || 'png';
+    const rand = Math.random().toString(36).slice(2, 8);
+    const filename = `agenthub-${Date.now()}-${rand}.${safeExt}`;
+    const filePath = path.join(os.tmpdir(), filename);
+    fs.writeFileSync(filePath, buffer);
+    return { path: filePath };
+  } catch (err) {
+    return { error: err.message };
   }
 });
 
@@ -309,8 +329,18 @@ ipcMain.on('terminal:resize', (_event, agentId, cols, rows) => {
   }
 });
 
+// Detach: kill only the pty client, leave the tmux session running so
+// claude/codex/shell processes inside survive until we reattach next launch.
+ipcMain.handle('terminal:detach', async (_event, agentId) => {
+  const session = terminalSessions.get(agentId);
+  if (!session?.pty) return { detached: false };
+  try { session.pty.kill(); } catch {}
+  terminalSessions.delete(agentId);
+  return { detached: true };
+});
+
 // Destroy the tmux session AND the pty client. This is "really kill it",
-// distinct from closing a tab (which just detaches).
+// used when the user removes the agent or explicitly nukes the session.
 ipcMain.handle('terminal:kill', async (_event, agentId) => {
   const session = terminalSessions.get(agentId);
   if (!session?.pty) return { killed: false };
