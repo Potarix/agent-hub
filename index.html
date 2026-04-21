@@ -1751,6 +1751,10 @@
       };
 
       const removeAgent = (id) => {
+        const agent = agents.find(a => a.id === id);
+        if (agent && isTerminalProvider(agent.provider)) {
+          window.agentHub.terminalKill(id);
+        }
         setAgents(prev => prev.filter(a => a.id !== id));
         setChats(prev => { const next = { ...prev }; delete next[id]; return next; });
         if (activeId === id) setActiveId(null);
@@ -1794,6 +1798,7 @@
                       agent={ag}
                       isActive={activeId === ag.id}
                       status={statuses[ag.id]}
+                      setLastActivityTime={setLastActivityTime}
                     />
                   ) : (
                     <ChatView
@@ -3114,7 +3119,7 @@
     }
 
     // ── Terminal View (xterm.js) ──
-    function TerminalView({ agent, isActive, status }) {
+    function TerminalView({ agent, isActive, status, setLastActivityTime }) {
       const containerRef = useRef(null);
       const xtermRef = useRef(null);
       const fitAddonRef = useRef(null);
@@ -3201,14 +3206,84 @@
         };
         window.agentHub.onThemeChange(onTheme);
 
-        // Send keystrokes to backend
-        term.onData(data => {
-          window.agentHub.terminalInput(agent.id, data);
+        // Intercept Shift+Enter and macOS Cmd-key shortcuts so the terminal
+        // behaves like the native macOS Terminal.app (readline bindings).
+        term.attachCustomKeyEventHandler((e) => {
+          if (e.type !== 'keydown') return true;
+
+          const send = (seq) => {
+            window.agentHub.terminalInput(agent.id, seq);
+            e.preventDefault();
+            return false;
+          };
+
+          // Shift+Enter → ESC+CR so agent CLIs (Claude Code, Codex) insert a
+          // newline instead of submitting. xterm.js sends plain \r otherwise.
+          if (e.key === 'Enter' && e.shiftKey) return send('\x1b\r');
+
+          // macOS Cmd shortcuts (Terminal.app parity). Cmd is never forwarded
+          // as a modifier to the PTY, so translate to readline control chars.
+          if (e.metaKey && !e.ctrlKey && !e.altKey) {
+            switch (e.key) {
+              case 'Backspace': return send('\x15'); // kill to start of line
+              case 'Delete':    return send('\x0b'); // kill to end of line
+              case 'ArrowLeft': return send('\x01'); // beginning of line
+              case 'ArrowRight':return send('\x05'); // end of line
+            }
+          }
+
+          // Option+Arrows → word-wise motion. (Option+Backspace is handled
+          // natively via macOptionIsMeta, which emits ESC+DEL.)
+          if (e.altKey && !e.metaKey && !e.ctrlKey) {
+            if (e.key === 'ArrowLeft')  return send('\x1bb');
+            if (e.key === 'ArrowRight') return send('\x1bf');
+          }
+
+          return true;
         });
 
-        // Receive output from PTY
+        // Activity model:
+        //   - User types → bump immediately, arm "awaiting response" flag
+        //   - PTY output arrives while armed → (re)start an idle timer
+        //   - Output quiet for DONE_IDLE_MS → bump (Claude/Codex finished)
+        //   - Bell char (\x07) while armed → bump immediately (prompts/attention)
+        // We don't bump on every output chunk — that's what caused the tab
+        // to shove itself to the top during streaming.
+        const DONE_IDLE_MS = 1500;
+        let awaitingResponse = false;
+        let idleTimer = null;
+        const bumpNow = () => {
+          if (!setLastActivityTime) return;
+          setLastActivityTime(prev => ({ ...prev, [agent.id]: Date.now() }));
+        };
+        const markDone = () => {
+          if (!awaitingResponse) return;
+          awaitingResponse = false;
+          if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+          bumpNow();
+        };
+
+        // Focus reports (\x1b[I / \x1b[O) and mouse events (\x1b[M... legacy,
+        // \x1b[<...M/m SGR) are emitted by xterm on click when the running
+        // program enables those modes (Claude Code, Codex, vim). They aren't
+        // real user activity, so don't bump the sidebar on them.
+        const isTerminalReportEvent = (data) =>
+          data === '\x1b[I' || data === '\x1b[O' || /^\x1b\[(<|M)/.test(data);
+        term.onData(data => {
+          window.agentHub.terminalInput(agent.id, data);
+          if (isTerminalReportEvent(data)) return;
+          bumpNow();
+          awaitingResponse = true;
+        });
+
+        // Receive output from PTY.
         const offData = window.agentHub.onTerminalData((id, data) => {
-          if (id === agent.id) term.write(data);
+          if (id !== agent.id) return;
+          term.write(data);
+          if (!awaitingResponse) return;
+          if (data.includes('\x07')) { markDone(); return; }
+          if (idleTimer) clearTimeout(idleTimer);
+          idleTimer = setTimeout(markDone, DONE_IDLE_MS);
         });
 
         // Handle PTY exit
@@ -3221,13 +3296,74 @@
         });
 
         return () => {
+          if (idleTimer) clearTimeout(idleTimer);
           offData();
           offExit();
           term.dispose();
           xtermRef.current = null;
           fitAddonRef.current = null;
-          // Kill PTY on unmount
-          window.agentHub.terminalKill(agent.id);
+          // Detach only — keep tmux session alive so claude/codex survive
+          // app close and reattach on next launch.
+          window.agentHub.terminalDetach(agent.id);
+        };
+      }, [agent.id]);
+
+      // Image drag-drop and clipboard-paste support.
+      // Claude Code / Codex read image references as plain file paths typed
+      // at the prompt, so we inject the path into the PTY on drop/paste.
+      useEffect(() => {
+        const el = containerRef.current;
+        if (!el) return;
+
+        // macOS Terminal.app-style escape: backslash space / quote / backslash.
+        const escapePath = (p) => String(p).replace(/([ "'\\])/g, '\\$1');
+
+        const writePaths = (paths) => {
+          const joined = paths.filter(Boolean).map(escapePath).join(' ');
+          if (!joined) return;
+          window.agentHub.terminalInput(agent.id, joined);
+          xtermRef.current?.focus();
+        };
+
+        const onDragOver = (e) => {
+          e.preventDefault();
+          if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+        };
+
+        const onDrop = (e) => {
+          const files = [...(e.dataTransfer?.files || [])];
+          if (files.length === 0) return;
+          e.preventDefault();
+          writePaths(files.map(f => f.path));
+        };
+
+        // Capture phase so we intercept before xterm.js writes the image
+        // bytes as garbled text into the PTY.
+        const onPaste = async (e) => {
+          const items = [...(e.clipboardData?.items || [])];
+          const imageItem = items.find(it => it.kind === 'file' && it.type.startsWith('image/'));
+          if (!imageItem) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const file = imageItem.getAsFile();
+          if (!file) return;
+          try {
+            const buf = new Uint8Array(await file.arrayBuffer());
+            const ext = imageItem.type.split('/')[1] || 'png';
+            const result = await window.agentHub.saveImageTemp(buf, ext);
+            if (result?.path) writePaths([result.path]);
+          } catch (err) {
+            console.error('paste image failed', err);
+          }
+        };
+
+        el.addEventListener('dragover', onDragOver);
+        el.addEventListener('drop', onDrop);
+        el.addEventListener('paste', onPaste, true);
+        return () => {
+          el.removeEventListener('dragover', onDragOver);
+          el.removeEventListener('drop', onDrop);
+          el.removeEventListener('paste', onPaste, true);
         };
       }, [agent.id]);
 

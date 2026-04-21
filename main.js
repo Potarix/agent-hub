@@ -1,5 +1,7 @@
 const { app, BrowserWindow, ipcMain, nativeTheme, shell } = require('electron');
-const { spawn } = require('child_process');
+const { spawn, spawnSync, execSync } = require('child_process');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const pty = require('node-pty');
 
@@ -72,6 +74,24 @@ ipcMain.handle('open-external', async (_event, url) => {
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
+  }
+});
+
+// ── Clipboard Image → Temp File IPC ──
+// Renderer sends image bytes (Uint8Array) from a paste event; we write to
+// a temp file and return the path so the renderer can inject it into the PTY.
+
+ipcMain.handle('image:save-temp', async (_event, data, ext) => {
+  try {
+    const buffer = Buffer.from(data);
+    const safeExt = String(ext || 'png').replace(/[^a-z0-9]/gi, '').slice(0, 8) || 'png';
+    const rand = Math.random().toString(36).slice(2, 8);
+    const filename = `agenthub-${Date.now()}-${rand}.${safeExt}`;
+    const filePath = path.join(os.tmpdir(), filename);
+    fs.writeFileSync(filePath, buffer);
+    return { path: filePath };
+  } catch (err) {
+    return { error: err.message };
   }
 });
 
@@ -178,12 +198,51 @@ ipcMain.handle('agent:list-models', async (_event, agent) => {
   }
 });
 
-// ── Terminal Sessions ──
+// ── Terminal Sessions (tmux-backed for persistence) ──
+//
+// Each terminal tab is a tmux client pointed at a per-agent tmux session
+// (`agenthub-<id>`). The pty we spawn is just the tmux client — if Electron
+// exits or SSH disconnects, the tmux server keeps the session (and any running
+// command) alive. Reopening the tab re-attaches with scrollback intact.
 
-const terminalSessions = new Map(); // agentId -> { pty }
+const terminalSessions = new Map(); // agentId -> { pty, tmuxName, location, agent }
+
+function tmuxSessionName(agentId) {
+  const safe = String(agentId).replace(/[^a-zA-Z0-9_-]/g, '_');
+  return `agenthub-${safe}`;
+}
+
+function shQuote(s) {
+  return `'${String(s).replace(/'/g, `'\\''`)}'`;
+}
+
+function hasLocalTmux() {
+  try {
+    execSync('tmux -V', { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Shell snippet that attaches to (or creates) a tmux session, falling back to
+// a plain login shell if tmux isn't installed on the target host. `-D` kicks
+// any other client off the session so the newest tab wins.
+function buildTmuxCommand(name, cwd) {
+  const cwdArg = cwd ? ` -c ${shQuote(cwd)}` : '';
+  const cdLine = cwd ? `cd ${shQuote(cwd)} 2>/dev/null; ` : '';
+  return (
+    `if command -v tmux >/dev/null 2>&1; then ` +
+      `exec tmux new-session -A -D -s ${shQuote(name)}${cwdArg}; ` +
+    `else ` +
+      `${cdLine}exec "$SHELL" -l; ` +
+    `fi`
+  );
+}
 
 ipcMain.handle('terminal:spawn', async (_event, agent) => {
-  // Kill any existing session
+  // Tear down any prior pty for this agent. We do NOT kill the tmux session
+  // itself — that's the whole point; it outlives the client.
   const existing = terminalSessions.get(agent.id);
   if (existing?.pty) {
     try { existing.pty.kill(); } catch {}
@@ -193,40 +252,58 @@ ipcMain.handle('terminal:spawn', async (_event, agent) => {
   const env = getLoginEnv();
   const shell = env.SHELL || '/bin/bash';
   const homeDir = env.HOME || '/';
+  const tmuxName = tmuxSessionName(agent.id);
   let ptyProc;
+  let location;
 
   if (agent.provider === 'terminal-ssh') {
+    location = 'ssh';
+    const remoteCmd = buildTmuxCommand(tmuxName, agent.workDir || '');
     const args = ['-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=10', '-p', String(agent.sshPort || 22)];
     if (agent.sshKey) args.push('-i', agent.sshKey);
     args.push(`${agent.sshUser || 'root'}@${agent.sshHost}`);
-    if (agent.workDir) {
-      // Jump into the working directory on connect
-      args.push('-t', `cd ${agent.workDir} 2>/dev/null; exec $SHELL -l`);
-    }
+    args.push('-t', remoteCmd);
     ptyProc = pty.spawn('ssh', args, {
       name: 'xterm-256color',
       cols: 80, rows: 24,
       env: { ...env, TERM: 'xterm-256color' },
     });
   } else {
+    location = 'local';
     const startDir = agent.workDir ? agent.workDir.replace(/^~/, homeDir) : homeDir;
-    ptyProc = pty.spawn(shell, ['-l'], {
-      name: 'xterm-256color',
-      cols: 80, rows: 24,
-      cwd: startDir,
-      env: { ...env, TERM: 'xterm-256color' },
-    });
+    if (hasLocalTmux()) {
+      const cmd = buildTmuxCommand(tmuxName, startDir);
+      ptyProc = pty.spawn('/bin/sh', ['-c', cmd], {
+        name: 'xterm-256color',
+        cols: 80, rows: 24,
+        cwd: startDir,
+        env: { ...env, TERM: 'xterm-256color' },
+      });
+    } else {
+      // No local tmux — session won't persist across app restart.
+      ptyProc = pty.spawn(shell, ['-l'], {
+        name: 'xterm-256color',
+        cols: 80, rows: 24,
+        cwd: startDir,
+        env: { ...env, TERM: 'xterm-256color' },
+      });
+    }
   }
 
-  terminalSessions.set(agent.id, { pty: ptyProc });
+  terminalSessions.set(agent.id, { pty: ptyProc, tmuxName, location, agent });
 
+  // Guard against events from a superseded pty leaking into the current tab.
   ptyProc.onData(data => {
+    const current = terminalSessions.get(agent.id);
+    if (current?.pty !== ptyProc) return;
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('terminal:data', agent.id, data);
     }
   });
 
   ptyProc.onExit(({ exitCode }) => {
+    const current = terminalSessions.get(agent.id);
+    if (current?.pty !== ptyProc) return;
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('terminal:exit', agent.id, exitCode);
     }
@@ -252,15 +329,41 @@ ipcMain.on('terminal:resize', (_event, agentId, cols, rows) => {
   }
 });
 
-// Kill PTY
+// Detach: kill only the pty client, leave the tmux session running so
+// claude/codex/shell processes inside survive until we reattach next launch.
+ipcMain.handle('terminal:detach', async (_event, agentId) => {
+  const session = terminalSessions.get(agentId);
+  if (!session?.pty) return { detached: false };
+  try { session.pty.kill(); } catch {}
+  terminalSessions.delete(agentId);
+  return { detached: true };
+});
+
+// Destroy the tmux session AND the pty client. This is "really kill it",
+// used when the user removes the agent or explicitly nukes the session.
 ipcMain.handle('terminal:kill', async (_event, agentId) => {
   const session = terminalSessions.get(agentId);
-  if (session?.pty) {
-    try { session.pty.kill(); } catch {}
-    terminalSessions.delete(agentId);
-    return { killed: true };
-  }
-  return { killed: false };
+  if (!session?.pty) return { killed: false };
+
+  const { pty: ptyProc, tmuxName, location, agent } = session;
+
+  try {
+    if (location === 'local') {
+      if (hasLocalTmux()) {
+        spawnSync('tmux', ['kill-session', '-t', tmuxName], { stdio: 'ignore' });
+      }
+    } else if (location === 'ssh' && agent) {
+      const args = ['-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=5', '-p', String(agent.sshPort || 22)];
+      if (agent.sshKey) args.push('-i', agent.sshKey);
+      args.push(`${agent.sshUser || 'root'}@${agent.sshHost}`);
+      args.push(`tmux kill-session -t ${shQuote(tmuxName)} 2>/dev/null || true`);
+      spawnSync('ssh', args, { stdio: 'ignore', timeout: 7000 });
+    }
+  } catch {}
+
+  try { ptyProc.kill(); } catch {}
+  terminalSessions.delete(agentId);
+  return { killed: true };
 });
 
 // ── Register feature handlers ──
