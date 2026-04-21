@@ -3242,15 +3242,27 @@
           return true;
         });
 
-        // Send keystrokes to backend
-        let lastActivityUpdate = 0;
-        const bumpActivity = () => {
-          const now = Date.now();
-          if (setLastActivityTime && now - lastActivityUpdate > 2000) {
-            lastActivityUpdate = now;
-            setLastActivityTime(prev => ({ ...prev, [agent.id]: now }));
-          }
+        // Activity model:
+        //   - User types → bump immediately, arm "awaiting response" flag
+        //   - PTY output arrives while armed → (re)start an idle timer
+        //   - Output quiet for DONE_IDLE_MS → bump (Claude/Codex finished)
+        //   - Bell char (\x07) while armed → bump immediately (prompts/attention)
+        // We don't bump on every output chunk — that's what caused the tab
+        // to shove itself to the top during streaming.
+        const DONE_IDLE_MS = 1500;
+        let awaitingResponse = false;
+        let idleTimer = null;
+        const bumpNow = () => {
+          if (!setLastActivityTime) return;
+          setLastActivityTime(prev => ({ ...prev, [agent.id]: Date.now() }));
         };
+        const markDone = () => {
+          if (!awaitingResponse) return;
+          awaitingResponse = false;
+          if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+          bumpNow();
+        };
+
         // Focus reports (\x1b[I / \x1b[O) and mouse events (\x1b[M... legacy,
         // \x1b[<...M/m SGR) are emitted by xterm on click when the running
         // program enables those modes (Claude Code, Codex, vim). They aren't
@@ -3260,14 +3272,18 @@
         term.onData(data => {
           window.agentHub.terminalInput(agent.id, data);
           if (isTerminalReportEvent(data)) return;
-          bumpActivity();
+          bumpNow();
+          awaitingResponse = true;
         });
 
-        // Receive output from PTY
+        // Receive output from PTY.
         const offData = window.agentHub.onTerminalData((id, data) => {
           if (id !== agent.id) return;
           term.write(data);
-          bumpActivity();
+          if (!awaitingResponse) return;
+          if (data.includes('\x07')) { markDone(); return; }
+          if (idleTimer) clearTimeout(idleTimer);
+          idleTimer = setTimeout(markDone, DONE_IDLE_MS);
         });
 
         // Handle PTY exit
@@ -3280,6 +3296,7 @@
         });
 
         return () => {
+          if (idleTimer) clearTimeout(idleTimer);
           offData();
           offExit();
           term.dispose();
