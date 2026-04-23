@@ -34,6 +34,16 @@ To run in background (detached from terminal):
 npm run start-bg
 ```
 
+## 📦 macOS Builds
+
+Create a local unsigned DMG/ZIP build:
+
+```bash
+CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist:mac
+```
+
+Release signing, notarization, and in-app update publishing steps are documented in [RELEASE.md](./RELEASE.md).
+
 ## 🔧 Configuration
 
 ### Adding AI Agents
@@ -77,4 +87,3 @@ MIT License - see LICENSE file for details
 ---
 
 **Note**: This project is under active development. Features and APIs may change.
-

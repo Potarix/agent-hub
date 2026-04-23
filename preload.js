@@ -72,6 +72,17 @@ contextBridge.exposeInMainWorld('agentHub', {
   getSystemTheme: () => ipcRenderer.invoke('theme:get'),
   onThemeChange: (cb) => ipcRenderer.on('theme:changed', (_e, isDark) => cb(isDark)),
 
+  // App/update status
+  getAppInfo: () => ipcRenderer.invoke('app:get-info'),
+  getUpdateStatus: () => ipcRenderer.invoke('updater:get-status'),
+  checkForUpdates: () => ipcRenderer.invoke('updater:check'),
+  installUpdate: () => ipcRenderer.invoke('updater:install'),
+  onUpdaterStatus: (cb) => {
+    const handler = (_e, status) => cb(status);
+    ipcRenderer.on('updater:status', handler);
+    return () => ipcRenderer.removeListener('updater:status', handler);
+  },
+
   // External links
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
 

@@ -1284,6 +1284,7 @@
       letter-spacing: -0.1px;
     }
     .btn:active { transform: scale(0.97); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
     .btn-primary { background: var(--accent); color: white; box-shadow: 0 2px 8px rgba(124,106,255,0.2); }
     .btn-primary:hover { background: var(--accent-dim); }
     .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text-1); }
@@ -1488,6 +1489,56 @@
     .settings-agent-card:hover .edit-arrow {
       color: var(--accent);
       transform: translateX(2px);
+    }
+    .update-panel {
+      padding: 14px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--bg-2);
+      margin-bottom: 16px;
+    }
+    .update-panel-main {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .update-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text-0);
+      letter-spacing: -0.1px;
+    }
+    .update-meta {
+      font-size: 11px;
+      color: var(--text-2);
+      margin-top: 3px;
+    }
+    .update-actions {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .update-status {
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--text-2);
+      line-height: 1.5;
+    }
+    .update-status.ready { color: var(--green); }
+    .update-status.error { color: var(--red); }
+    .update-progress {
+      height: 5px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: var(--bg-3);
+      margin-top: 10px;
+    }
+    .update-progress-fill {
+      height: 100%;
+      border-radius: inherit;
+      background: var(--accent);
+      transition: width 0.2s ease;
     }
   </style>
 </head>
@@ -3463,6 +3514,83 @@
       { name: 'Terminal (SSH)', emoji: '>', provider: 'terminal-ssh', sshHost: '', sshUser: 'root', providerClass: 'provider-terminal', desc: 'SSH remote terminal' },
     ];
 
+    function formatUpdateText(status) {
+      if (!status) return 'Update status unavailable.';
+      if (status.status === 'checking') return 'Checking for updates...';
+      if (status.status === 'downloading') {
+        const pct = status.progress?.percent;
+        return typeof pct === 'number' ? `Downloading ${Math.round(pct)}%...` : 'Downloading update...';
+      }
+      if (status.status === 'ready') {
+        return status.updateInfo?.version ? `Version ${status.updateInfo.version} is ready.` : 'Update ready.';
+      }
+      if (status.status === 'current') return 'Agent Hub is up to date.';
+      if (status.status === 'disabled') return status.error || 'Updates are available from packaged builds only.';
+      if (status.status === 'error') return status.error || 'Update check failed.';
+      return 'No update check has run yet.';
+    }
+
+    function UpdatePanel() {
+      const [appInfo, setAppInfo] = useState(null);
+      const [updateStatus, setUpdateStatus] = useState(null);
+      const isBusy = updateStatus?.status === 'checking' || updateStatus?.status === 'downloading';
+      const progress = Math.max(0, Math.min(100, updateStatus?.progress?.percent || 0));
+
+      useEffect(() => {
+        let cancelled = false;
+        window.agentHub.getAppInfo?.().then(info => {
+          if (!cancelled) setAppInfo(info);
+        });
+        window.agentHub.getUpdateStatus?.().then(status => {
+          if (!cancelled) setUpdateStatus(status);
+        });
+        const offUpdater = window.agentHub.onUpdaterStatus?.(status => setUpdateStatus(status));
+        return () => {
+          cancelled = true;
+          offUpdater?.();
+        };
+      }, []);
+
+      const check = async () => {
+        setUpdateStatus(s => ({ ...(s || {}), status: 'checking', error: null }));
+        const status = await window.agentHub.checkForUpdates?.();
+        if (status) setUpdateStatus(status);
+      };
+
+      const install = async () => {
+        await window.agentHub.installUpdate?.();
+      };
+
+      const statusClass = updateStatus?.status === 'ready' ? 'ready' : updateStatus?.status === 'error' ? 'error' : '';
+
+      return (
+        <div className="update-panel">
+          <div className="update-panel-main">
+            <div>
+              <div className="update-title">Agent Hub</div>
+              <div className="update-meta">Version {appInfo?.version || updateStatus?.currentVersion || 'unknown'}</div>
+            </div>
+            <div className="update-actions">
+              {updateStatus?.canInstall && (
+                <button className="btn btn-primary" onClick={install}>Restart</button>
+              )}
+              <button className="btn btn-ghost" onClick={check} disabled={isBusy}>
+                {isBusy ? 'Checking...' : 'Check for Updates'}
+              </button>
+            </div>
+          </div>
+          {(updateStatus?.status || updateStatus?.error) && (
+            <div className={`update-status ${statusClass}`}>{formatUpdateText(updateStatus)}</div>
+          )}
+          {updateStatus?.status === 'downloading' && progress > 0 && (
+            <div className="update-progress">
+              <div className="update-progress-fill" style={{ width: `${progress}%` }} />
+            </div>
+          )}
+        </div>
+      );
+    }
+
     // ── Settings Modal ──
     function SettingsModal({ agents, editAgent, setEditAgent, onUpdate, onRemove, onAdd, onClose }) {
       const [form, setForm] = useState(editAgent || {});
@@ -3540,6 +3668,7 @@
 
             {!editAgent && !showPresets ? (
               <>
+                <UpdatePanel />
                 {agents.map(agent => (
                   <div
                     key={agent.id}
