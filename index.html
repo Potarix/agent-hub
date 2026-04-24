@@ -252,6 +252,48 @@
       flex-shrink: 1;
       min-width: 0;
     }
+    .agent-name-input {
+      font: inherit;
+      color: var(--text-0);
+      background: var(--bg-2);
+      border: 1px solid rgba(124,106,255,0.4);
+      border-radius: 6px;
+      padding: 2px 6px;
+      margin: -3px -7px;
+      outline: none;
+      box-shadow: 0 0 0 3px var(--accent-glow);
+      min-width: 0;
+      width: 100%;
+      flex-shrink: 1;
+    }
+    .agent-context-menu {
+      position: fixed;
+      z-index: 1000;
+      min-width: 140px;
+      background: var(--bg-1);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+      padding: 4px;
+    }
+    .agent-context-menu button {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: none;
+      color: var(--text-0);
+      font-size: 13px;
+      padding: 7px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .agent-context-menu button:hover {
+      background: var(--bg-2);
+    }
+    .agent-context-menu button.danger {
+      color: #f87171;
+    }
     .agent-provider {
       font-size: 12px;
       color: var(--text-2);
@@ -1836,6 +1878,7 @@
               }}
               onAdd={addAgent}
               onOpenSettings={() => setShowSettings(true)}
+              onRename={updateAgent}
               lastActivityTime={lastActivityTime}
             />
             <div className="main-area">
@@ -1979,13 +2022,46 @@
     }
 
     // ── Sidebar ──
-    function Sidebar({ agents, activeId, statuses, loadingAgents, completionStatus, onSelect, onAdd, onOpenSettings, lastActivityTime }) {
+    function Sidebar({ agents, activeId, statuses, loadingAgents, completionStatus, onSelect, onAdd, onOpenSettings, onRename, lastActivityTime }) {
+      const [renamingId, setRenamingId] = useState(null);
+      const [draft, setDraft] = useState('');
+      const [menu, setMenu] = useState(null); // { id, x, y }
+
       // Sort agents by last activity time (most recent first)
       const sortedAgents = [...agents].sort((a, b) => {
         const timeA = lastActivityTime[a.id] || 0;
         const timeB = lastActivityTime[b.id] || 0;
         return timeB - timeA;
       });
+
+      useEffect(() => {
+        if (!menu) return;
+        const close = () => setMenu(null);
+        window.addEventListener('click', close);
+        window.addEventListener('scroll', close, true);
+        window.addEventListener('resize', close);
+        return () => {
+          window.removeEventListener('click', close);
+          window.removeEventListener('scroll', close, true);
+          window.removeEventListener('resize', close);
+        };
+      }, [menu]);
+
+      const startRename = (agent) => {
+        setMenu(null);
+        setDraft(agent.name || '');
+        setRenamingId(agent.id);
+      };
+
+      const commitRename = (agent) => {
+        const next = draft.trim();
+        if (next && next !== agent.name) {
+          onRename({ ...agent, name: next });
+        }
+        setRenamingId(null);
+      };
+
+      const cancelRename = () => setRenamingId(null);
 
       return (
         <div className="sidebar">
@@ -2000,6 +2076,10 @@
                 key={agent.id}
                 className={`agent-card ${activeId === agent.id ? 'active' : ''}`}
                 onClick={() => onSelect(agent.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setMenu({ id: agent.id, x: e.clientX, y: e.clientY });
+                }}
               >
                 <div className="agent-card-header">
                   <div className={`agent-avatar ${agent.providerClass}`}>
@@ -2007,16 +2087,41 @@
                   </div>
                   <div className="agent-info">
                     <div className="agent-name">
-                      <span className="agent-name-text">{agent.name}</span>
-                      {loadingAgents.has(agent.id) && (
-                        <span className="agent-thinking-indicator" title="Typing">
-                          <span /><span /><span />
-                        </span>
-                      )}
-                      {typeof completionStatus[agent.id] === 'number' && completionStatus[agent.id] > 0 && (
-                        <span className="agent-completion-badge" title="Unread Messages">
-                          {completionStatus[agent.id]}
-                        </span>
+                      {renamingId === agent.id ? (
+                        <input
+                          className="agent-name-input"
+                          value={draft}
+                          autoFocus
+                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => setDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') { e.preventDefault(); commitRename(agent); }
+                            else if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
+                          }}
+                          onBlur={() => commitRename(agent)}
+                          onClick={(e) => e.stopPropagation()}
+                          onDoubleClick={(e) => e.stopPropagation()}
+                        />
+                      ) : (
+                        <>
+                          <span
+                            className="agent-name-text"
+                            onDoubleClick={(e) => { e.stopPropagation(); startRename(agent); }}
+                            title="Double-click to rename"
+                          >
+                            {agent.name}
+                          </span>
+                          {loadingAgents.has(agent.id) && (
+                            <span className="agent-thinking-indicator" title="Typing">
+                              <span /><span /><span />
+                            </span>
+                          )}
+                          {typeof completionStatus[agent.id] === 'number' && completionStatus[agent.id] > 0 && (
+                            <span className="agent-completion-badge" title="Unread Messages">
+                              {completionStatus[agent.id]}
+                            </span>
+                          )}
+                        </>
                       )}
                     </div>
                     <div className="agent-provider">
@@ -2029,6 +2134,19 @@
               </div>
             ))}
           </div>
+          {menu && (() => {
+            const agent = agents.find(a => a.id === menu.id);
+            if (!agent) return null;
+            return (
+              <div
+                className="agent-context-menu"
+                style={{ top: menu.y, left: menu.x }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button onClick={() => startRename(agent)}>Rename</button>
+              </div>
+            );
+          })()}
           <div className="sidebar-footer">
             <button className="btn-settings" onClick={onOpenSettings}>
               <span style={{ fontSize: '14px' }}>&#9881;</span> Settings

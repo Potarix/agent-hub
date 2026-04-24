@@ -1,0 +1,38 @@
+name: Feature request
+description: Suggest a new feature, provider, or improvement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: What are you trying to do? What doesn't work today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like Agent Hub to do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workarounds you've tried, or other approaches?
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - New provider (agent CLI support)
+        - UI / UX
+        - Permissions / security
+        - SSH / remote hosts
+        - Slash commands
+        - Performance
+        - Other
+    validations:
+      required: true

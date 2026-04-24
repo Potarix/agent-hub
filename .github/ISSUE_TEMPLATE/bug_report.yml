@@ -1,0 +1,72 @@
+name: Bug report
+description: Something's broken in Agent Hub
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. A clear repro helps us fix it faster.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect to happen? What actually happened?
+      placeholder: I opened a new Claude Code thread over SSH and...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Agent / provider
+      description: Which agent were you using when this happened? (Claude Code, Codex, Hermes, OpenClaw, openai-compat, Terminal)
+      placeholder: Claude Code (SSH mode)
+    validations:
+      required: true
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      placeholder: e.g. 14.4 (Apple Silicon)
+    validations:
+      required: true
+  - type: input
+    id: agent-hub-version
+    attributes:
+      label: Agent Hub version
+      description: See About → Version, or `package.json`
+      placeholder: 1.0.0
+    validations:
+      required: true
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js version (only if building from source)
+      placeholder: v22.0.0
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Open View → Toggle Developer Tools → Console, reproduce, paste relevant output.
+        Redact any API keys, hostnames, or file paths you don't want public.
+      render: shell
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Checks
+      options:
+        - label: I've searched existing issues and this isn't a duplicate.
+          required: true
+        - label: I've redacted secrets (API keys, tokens, private hostnames) from logs.
+          required: true
