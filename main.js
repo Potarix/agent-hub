@@ -20,6 +20,7 @@ const { chatOpenAI, streamOpenAI } = require('./providers/openai-compat');
 // Feature modules
 const { registerAuthHandlers } = require('./auth');
 const { registerSlashCommandHandlers } = require('./slash-commands');
+const { registerUpdaterHandlers, scheduleUpdateCheck } = require('./lib/updater');
 
 // ── Electron App ──
 
@@ -43,6 +44,7 @@ function createWindow() {
   mainWindow.loadFile('index.html');
   nativeTheme.themeSource = 'system';
   setMainWindow(mainWindow);
+  scheduleUpdateCheck();
 
   const updateBgColor = () => {
     const isDark = nativeTheme.shouldUseDarkColors;
@@ -370,3 +372,4 @@ ipcMain.handle('terminal:kill', async (_event, agentId) => {
 
 registerAuthHandlers(ipcMain);
 registerSlashCommandHandlers(ipcMain);
+registerUpdaterHandlers();

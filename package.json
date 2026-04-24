@@ -1,24 +1,91 @@
 {
   "name": "agent-hub",
   "version": "1.0.0",
-  "description": "Unified desktop dashboard for all your AI agents",
+  "description": "Open-source native macOS app that unifies Claude Code, Codex, Hermes and OpenClaw in one chat window. Run AI agents locally or over SSH. MIT licensed, no telemetry.",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "start-bg": "nohup electron . >/dev/null 2>&1 & disown && echo 'Agent Hub running — close this terminal.'",
-    "dev": "electron . --dev"
+    "dev": "electron . --dev",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:mac:arm64": "electron-builder --mac --arm64",
+    "dist:mac:x64": "electron-builder --mac --x64",
+    "dist:mac:universal": "electron-builder --mac --universal",
+    "dist:mac:dmg": "electron-builder --mac dmg",
+    "publish:mac": "electron-builder --mac --publish always"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.105",
     "@openai/agents": "^0.8.3",
     "@openai/agents-extensions": "^0.8.3",
     "@openai/codex-sdk": "^0.120.0",
-    "electron": "^32.0.0",
+    "electron-updater": "^6.6.2",
     "marked": "^14.0.0",
     "node-pty": "^1.1.0",
     "openai": "^6.34.0",
     "xterm": "^5.3.0",
     "xterm-addon-fit": "^0.8.0"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.omardadabhoy.agenthub",
+    "productName": "Agent Hub",
+    "artifactName": "Agent-Hub-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "assets/**/*",
+      "auth.js",
+      "index.html",
+      "lib/**/*",
+      "main.js",
+      "preload.js",
+      "providers/**/*",
+      "slash-commands.js",
+      "package.json"
+    ],
+    "asar": true,
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/icon.icns",
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "dmg": {
+      "title": "Agent Hub ${version}",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "OmarDadabhoy",
+        "repo": "agenthub"
+      }
+    ],
+    "electronUpdaterCompatibility": ">=2.16"
   },
   "author": "Omar Dadabhoy",
   "license": "MIT",
@@ -29,15 +96,25 @@
   "bugs": {
     "url": "https://github.com/OmarDadabhoy/agenthub/issues"
   },
-  "homepage": "https://github.com/OmarDadabhoy/agenthub#readme",
+  "homepage": "https://agent-hub.tools/",
   "keywords": [
     "ai",
-    "agents",
-    "electron",
+    "ai-agents",
+    "agent-hub",
     "claude",
-    "openai",
+    "claude-code",
+    "claude-code-gui",
     "codex",
-    "desktop",
-    "dashboard"
+    "openai-codex",
+    "hermes",
+    "openclaw",
+    "anthropic",
+    "openai",
+    "macos",
+    "electron",
+    "desktop-app",
+    "ssh",
+    "developer-tools",
+    "mit"
   ]
 }

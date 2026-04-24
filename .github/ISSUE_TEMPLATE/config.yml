@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/OmarDadabhoy/agenthub/blob/main/.github/SECURITY.md
+    about: Please do not open a public issue — email the maintainer instead.
+  - name: Agent Hub website
+    url: https://agent-hub.tools/
+    about: Screenshots, docs, and a live demo.
+  - name: Questions & discussions
+    url: https://github.com/OmarDadabhoy/agenthub/discussions
+    about: Ask questions or share how you use Agent Hub.

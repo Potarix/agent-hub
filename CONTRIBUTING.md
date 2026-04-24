@@ -5,7 +5,7 @@ Thanks for your interest in contributing! Here's how to get started.
 ## Getting Started
 
 1. Fork the repo
-2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/agent-hub.git`
+2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/agenthub.git`
 3. Install dependencies: `npm install`
 4. Create a branch: `git checkout -b my-feature`
 5. Make your changes
