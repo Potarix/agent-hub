@@ -1,6 +1,6 @@
 {
   "name": "agent-hub",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Open-source native macOS app that unifies Claude Code, Codex, Hermes and OpenClaw in one chat window. Run AI agents locally or over SSH. MIT licensed, no telemetry.",
   "main": "main.js",
   "scripts": {
