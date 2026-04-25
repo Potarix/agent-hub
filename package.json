@@ -81,8 +81,8 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "OmarDadabhoy",
-        "repo": "agenthub"
+        "owner": "Potarix",
+        "repo": "agent-hub"
       }
     ],
     "electronUpdaterCompatibility": ">=2.16"
@@ -91,10 +91,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/OmarDadabhoy/agenthub.git"
+    "url": "https://github.com/Potarix/agent-hub.git"
   },
   "bugs": {
-    "url": "https://github.com/OmarDadabhoy/agenthub/issues"
+    "url": "https://github.com/Potarix/agent-hub/issues"
   },
   "homepage": "https://agent-hub.tools/",
   "keywords": [

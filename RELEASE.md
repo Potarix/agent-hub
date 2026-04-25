@@ -52,6 +52,14 @@ Release flow:
 
 ```bash
 npm version patch
+git push --follow-tags
+```
+
+Pushing a `v*` tag triggers `.github/workflows/release.yml`, which builds the DMG/ZIP/blockmaps and `latest-mac.yml` on a macOS arm64 runner and publishes them to a matching GitHub release. The workflow can also be run manually from the Actions tab.
+
+To build and publish from your laptop instead (skipping CI):
+
+```bash
 npm run publish:mac
 ```
 

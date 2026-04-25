@@ -11,7 +11,7 @@
     &nbsp;·&nbsp;
     <a href="https://agent-hub.tools/claude-code-gui">Claude Code GUI</a>
     &nbsp;·&nbsp;
-    <a href="https://github.com/OmarDadabhoy/agenthub/releases/latest">Download</a>
+    <a href="https://github.com/Potarix/agent-hub/releases/latest">Download</a>
     &nbsp;·&nbsp;
     <a href="CONTRIBUTING.md">Contributing</a>
   </p>
@@ -21,7 +21,7 @@
     <img alt="Platform: macOS 11+ (Apple Silicon)" src="https://img.shields.io/badge/platform-macOS%2011%2B%20%7C%20arm64-black.svg" />
     <img alt="Built with Electron" src="https://img.shields.io/badge/Electron-32-47848F.svg" />
     <img alt="No telemetry" src="https://img.shields.io/badge/telemetry-none-success.svg" />
-    <img alt="GitHub stars" src="https://img.shields.io/github/stars/OmarDadabhoy/agenthub?style=social" />
+    <img alt="GitHub stars" src="https://img.shields.io/github/stars/Potarix/agent-hub?style=social" />
   </p>
 </div>
 
@@ -67,13 +67,13 @@ Point it at your laptop and it spawns the agent CLI locally. Point it at `omar@p
 
 ### Download (recommended)
 
-Grab the latest `.dmg` from [GitHub Releases](https://github.com/OmarDadabhoy/agenthub/releases/latest). Requires **macOS 11+ on Apple Silicon**. ~183 MB.
+Grab the latest `.dmg` from [GitHub Releases](https://github.com/Potarix/agent-hub/releases/latest). Requires **macOS 11+ on Apple Silicon**. ~183 MB.
 
 ### From source
 
 ```bash
-git clone https://github.com/OmarDadabhoy/agenthub.git
-cd agenthub
+git clone https://github.com/Potarix/agent-hub.git
+cd agent-hub
 npm install
 npm start
 ```
@@ -156,7 +156,7 @@ For each thread, Agent Hub spawns the provider's CLI (locally via `node-pty`, or
 
 Pull requests welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. If you're adding a new provider, look at [`providers/openai-compat.js`](providers/openai-compat.js) first — it's the cleanest template.
 
-Found a bug? [Open an issue](https://github.com/OmarDadabhoy/agenthub/issues/new/choose).
+Found a bug? [Open an issue](https://github.com/Potarix/agent-hub/issues/new/choose).
 
 Security issue? Please email **omar.dadabhoy@gmail.com** instead of opening a public issue. Details in [SECURITY.md](.github/SECURITY.md).
 
