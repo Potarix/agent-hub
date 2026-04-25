@@ -138,6 +138,25 @@ function getCodexApiKey(agent) {
   return agent.apiKey || env.CODEX_API_KEY || env.OPENAI_API_KEY || process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY || '';
 }
 
+function getErrorMessage(err) {
+  return String(err?.error?.message || err?.response?.data?.error?.message || err?.message || err || '').trim();
+}
+
+function isCodexUpgradeRequiredError(message) {
+  return /requires a newer version of Codex|upgrade to the latest app or CLI/i.test(String(message || ''));
+}
+
+function hasLocalCodexChatGPTAuth() {
+  const codexAuthPath = path.join(os.homedir(), '.codex', 'auth.json');
+  try {
+    if (!fs.existsSync(codexAuthPath)) return false;
+    const authData = JSON.parse(fs.readFileSync(codexAuthPath, 'utf8'));
+    return !!(authData.auth_mode === 'chatgpt' && authData.tokens && authData.tokens.id_token);
+  } catch {
+    return false;
+  }
+}
+
 function formatCodexModelLabel(id, displayName) {
   const raw = String(displayName || id || '').trim();
   if (!raw) return '';
@@ -621,6 +640,123 @@ async function chatCodexWithCodexSDK(agent, userMsg, prompt) {
   return { content: turn.finalResponse || '', sessionId: thread.id, usage: turn.usage };
 }
 
+function streamCodexWithCLI(event, requestId, agent, prompt) {
+  const codexPath = agent.codexPath || 'codex';
+  const workDir = agent.workDir || process.env.HOME;
+
+  return new Promise((resolve) => {
+    const args = buildCodexExecArgs(agent, { stdinPrompt: true, json: true });
+
+    const proc = spawn(codexPath, args, {
+      env: { ...getLoginEnv() },
+      cwd: workDir,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    proc.stdin.write(prompt);
+    proc.stdin.end();
+
+    const forwarder = createCodexEventForwarder(event, requestId);
+    let buffer = '';
+    let stderrBuf = '';
+    let settled = false;
+
+    activeClaudeProcs.set(requestId, {
+      abort: () => proc.kill(),
+    });
+
+    proc.stdout.on('data', (data) => {
+      buffer += data.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // keep incomplete last line
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const evt = JSON.parse(line);
+          forwarder.handle(evt);
+        } catch {
+          // Not JSON: strip ANSI and send as raw text.
+          const cleaned = line
+            .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
+            .replace(/\r/g, '');
+          if (cleaned.trim()) {
+            event.sender.send('agent:stream-chunk', requestId, cleaned + '\n');
+            forwarder.markContentSent();
+          }
+        }
+      }
+    });
+
+    proc.stderr.on('data', (data) => {
+      stderrBuf += data.toString();
+    });
+
+    proc.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      activeClaudeProcs.delete(requestId);
+
+      if (!forwarder.sentAnyContent && code !== 0 && stderrBuf.trim()) {
+        const errMsg = stderrBuf.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').trim();
+        event.sender.send('agent:stream-error', requestId, errMsg || `Codex exited with code ${code}`);
+      } else {
+        event.sender.send('agent:stream-done', requestId, {
+          sessionId: forwarder.threadId || null,
+        });
+      }
+      resolve();
+    });
+
+    proc.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      activeClaudeProcs.delete(requestId);
+      event.sender.send('agent:stream-error', requestId, err.message);
+      resolve();
+    });
+  });
+}
+
+function chatCodexWithCLI(agent, prompt) {
+  const codexPath = agent.codexPath || 'codex';
+  const workDir = agent.workDir || process.env.HOME;
+  const args = buildCodexExecArgs(agent, { stdinPrompt: true });
+
+  // Use Codex's non-interactive entrypoint; the default TUI requires a TTY.
+  const proc = spawn(codexPath, args, {
+    env: { ...getLoginEnv() },
+    cwd: workDir,
+    stdio: ['pipe', 'pipe', 'pipe']
+  });
+
+  return new Promise((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdin.write(prompt);
+    proc.stdin.end();
+
+    proc.stdout.on('data', (d) => { stdout += d.toString(); });
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+
+    proc.on('close', (code) => {
+      if (stdout.trim()) {
+        const content = extractCodexResponse(stdout);
+        resolve({ content });
+      } else if (code === 0) {
+        resolve({ content: '' });
+      } else {
+        reject(new Error(stderr.trim() || `Codex exited with code ${code}`));
+      }
+    });
+
+    proc.on('error', (err) => {
+      reject(err);
+    });
+  });
+}
+
 // ── Local entry points ──
 
 async function streamCodexLocal(event, requestId, agent, messages) {
@@ -633,6 +769,7 @@ async function streamCodexLocal(event, requestId, agent, messages) {
   // Build prompt: includes full conversation history when no sessionId,
   // or just the last message when resuming an existing Codex thread.
   const prompt = getCodexPrompt(agent, messages, lastUserMsg);
+  const hasCodexAuth = hasLocalCodexChatGPTAuth();
 
   if (agent.useCodexSDK !== false) {
     try {
@@ -643,7 +780,11 @@ async function streamCodexLocal(event, requestId, agent, messages) {
       return;
     } catch (err) {
       activeClaudeProcs.delete(requestId);
-      const msg = err.message || '';
+      const msg = getErrorMessage(err);
+      if (hasCodexAuth && isCodexUpgradeRequiredError(msg)) {
+        await streamCodexWithCLI(event, requestId, agent, prompt);
+        return;
+      }
       if (msg.includes('401') || msg.includes('authentication') || msg.includes('not authenticated')) {
         event.sender.send('agent:stream-error', requestId, 'Codex is not authenticated. Run "codex auth" or set OPENAI_API_KEY.');
       } else {
@@ -653,98 +794,9 @@ async function streamCodexLocal(event, requestId, agent, messages) {
     }
   }
 
-  // Check if codex has ChatGPT auth
-  const homeDir = os.homedir();
-  const codexAuthPath = path.join(homeDir, '.codex', 'auth.json');
-  let hasCodexAuth = false;
-  try {
-    if (fs.existsSync(codexAuthPath)) {
-      const authData = JSON.parse(fs.readFileSync(codexAuthPath, 'utf8'));
-      hasCodexAuth = authData.auth_mode === 'chatgpt' && authData.tokens && authData.tokens.id_token;
-    }
-  } catch (e) {
-    // Auth file might be corrupted or inaccessible
-  }
-
   // If we have ChatGPT auth, use the codex CLI with JSONL event streaming
   if (hasCodexAuth) {
-    const codexPath = agent.codexPath || 'codex';
-    const workDir = agent.workDir || process.env.HOME;
-
-    return new Promise((resolve) => {
-      const args = buildCodexExecArgs(agent, { stdinPrompt: true, json: true });
-
-      const proc = spawn(codexPath, args, {
-        env: { ...getLoginEnv() },
-        cwd: workDir,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-
-      proc.stdin.write(prompt);
-      proc.stdin.end();
-
-      const forwarder = createCodexEventForwarder(event, requestId);
-      let buffer = '';
-      let stderrBuf = '';
-      let settled = false;
-
-      activeClaudeProcs.set(requestId, {
-        abort: () => proc.kill(),
-      });
-
-      proc.stdout.on('data', (data) => {
-        buffer += data.toString();
-        const lines = buffer.split('\n');
-        buffer = lines.pop(); // keep incomplete last line
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const evt = JSON.parse(line);
-            forwarder.handle(evt);
-          } catch {
-            // Not JSON — strip ANSI and send as raw text
-            const cleaned = line
-              .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
-              .replace(/\r/g, '');
-            if (cleaned.trim()) {
-              event.sender.send('agent:stream-chunk', requestId, cleaned + '\n');
-              forwarder.markContentSent();
-            }
-          }
-        }
-      });
-
-      proc.stderr.on('data', (data) => {
-        stderrBuf += data.toString();
-      });
-
-      // No timeout — wait for agent to finish
-
-      proc.on('close', (code) => {
-        if (settled) return;
-        settled = true;
-        activeClaudeProcs.delete(requestId);
-
-        if (!forwarder.sentAnyContent && code !== 0 && stderrBuf.trim()) {
-          const errMsg = stderrBuf.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').trim();
-          event.sender.send('agent:stream-error', requestId, errMsg || `Codex exited with code ${code}`);
-        } else {
-          event.sender.send('agent:stream-done', requestId, {
-            sessionId: forwarder.threadId || null,
-          });
-        }
-        resolve();
-      });
-
-      proc.on('error', (err) => {
-        if (settled) return;
-        settled = true;
-        activeClaudeProcs.delete(requestId);
-        event.sender.send('agent:stream-error', requestId, err.message);
-        resolve();
-      });
-    });
+    return streamCodexWithCLI(event, requestId, agent, prompt);
   }
 
   // Prefer SDK if API key is available and no ChatGPT auth
@@ -834,12 +886,20 @@ async function chatCodexLocal(agent, messages) {
 
   // Build prompt: includes full conversation history when no sessionId
   const prompt = getCodexPrompt(agent, messages, lastUserMsg);
+  const hasCodexAuth = hasLocalCodexChatGPTAuth();
 
   if (agent.useCodexSDK !== false) {
     try {
       return await chatCodexWithCodexSDK(agent, lastUserMsg, prompt);
     } catch (err) {
-      const msg = err.message || '';
+      const msg = getErrorMessage(err);
+      if (hasCodexAuth && isCodexUpgradeRequiredError(msg)) {
+        try {
+          return await chatCodexWithCLI(agent, prompt);
+        } catch (cliErr) {
+          return { error: getErrorMessage(cliErr) };
+        }
+      }
       if (msg.includes('401') || msg.includes('authentication') || msg.includes('not authenticated')) {
         return { error: 'Codex is not authenticated. Run "codex auth" or set OPENAI_API_KEY.' };
       }
@@ -847,64 +907,12 @@ async function chatCodexLocal(agent, messages) {
     }
   }
 
-  // Check if codex has ChatGPT auth
-  const homeDir = os.homedir();
-  const codexAuthPath = path.join(homeDir, '.codex', 'auth.json');
-  let hasCodexAuth = false;
-  try {
-    if (fs.existsSync(codexAuthPath)) {
-      const authData = JSON.parse(fs.readFileSync(codexAuthPath, 'utf8'));
-      hasCodexAuth = authData.auth_mode === 'chatgpt' && authData.tokens && authData.tokens.id_token;
-    }
-  } catch (e) {
-    // Auth file might be corrupted or inaccessible
-  }
-
   // If we have ChatGPT auth, use the codex CLI
   if (hasCodexAuth) {
-    const codexPath = agent.codexPath || 'codex';
-    const workDir = agent.workDir || process.env.HOME;
-
     try {
-      const args = buildCodexExecArgs(agent, { stdinPrompt: true });
-
-      // Use Codex's non-interactive entrypoint; the default TUI requires a TTY.
-      const proc = spawn(codexPath, args, {
-        env: { ...getLoginEnv() },
-        cwd: workDir,
-        stdio: ['pipe', 'pipe', 'pipe']
-      });
-
-      // Send the message via stdin and get the response
-      return new Promise((resolve, reject) => {
-        let stdout = '';
-        let stderr = '';
-
-        proc.stdin.write(prompt);
-        proc.stdin.end();
-
-        proc.stdout.on('data', (d) => { stdout += d.toString(); });
-        proc.stderr.on('data', (d) => { stderr += d.toString(); });
-
-        // No timeout — wait for agent to finish
-
-        proc.on('close', (code) => {
-          if (stdout.trim()) {
-            const content = extractCodexResponse(stdout);
-            resolve({ content });
-          } else if (code === 0) {
-            resolve({ content: '' });
-          } else {
-            reject(new Error(stderr.trim() || `Codex exited with code ${code}`));
-          }
-        });
-
-        proc.on('error', (err) => {
-          reject(err);
-        });
-      });
+      return await chatCodexWithCLI(agent, prompt);
     } catch (err) {
-      return { error: err.message };
+      return { error: getErrorMessage(err) };
     }
   }
 

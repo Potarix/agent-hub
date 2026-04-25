@@ -19,7 +19,7 @@
     "@anthropic-ai/claude-agent-sdk": "^0.2.105",
     "@openai/agents": "^0.8.3",
     "@openai/agents-extensions": "^0.8.3",
-    "@openai/codex-sdk": "^0.120.0",
+    "@openai/codex-sdk": "^0.125.0",
     "electron-updater": "^6.6.2",
     "marked": "^14.0.0",
     "node-pty": "^1.1.0",
