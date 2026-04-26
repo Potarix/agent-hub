@@ -3,6 +3,7 @@ const { runSSHCommand } = require('../lib/ssh');
 const { runLocalCommand, getLoginEnv } = require('../lib/local');
 const { shellQuote, buildRemoteCdCommand } = require('../lib/shell');
 const { activeClaudeProcs } = require('../lib/state');
+const { prepareMessagesWithFileAttachments } = require('../lib/attachments');
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -202,7 +203,8 @@ function streamFromProcess(proc, event, requestId, timeout) {
 // ── Local: streaming ──────────────────────────────────────────────────────
 
 async function streamHermesLocal(event, requestId, agent, messages) {
-  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+  const prepared = await prepareMessagesWithFileAttachments(agent, messages);
+  const lastUserMsg = prepared.lastUserMsg;
   if (!lastUserMsg) {
     event.sender.send('agent:stream-error', requestId, 'No user message found');
     return;
@@ -227,7 +229,8 @@ async function streamHermesLocal(event, requestId, agent, messages) {
 // ── Local: non-streaming chat ─────────────────────────────────────────────
 
 async function chatHermesLocal(agent, messages) {
-  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+  const prepared = await prepareMessagesWithFileAttachments(agent, messages);
+  const lastUserMsg = prepared.lastUserMsg;
   if (!lastUserMsg) return { error: 'No user message found' };
 
   const workDir = agent.workDir || process.env.HOME;
@@ -267,7 +270,8 @@ async function pingHermesLocal() {
 // ── SSH: streaming ────────────────────────────────────────────────────────
 
 async function streamHermes(event, requestId, agent, messages) {
-  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+  const prepared = await prepareMessagesWithFileAttachments(agent, messages, { remote: true });
+  const lastUserMsg = prepared.lastUserMsg;
   if (!lastUserMsg) {
     event.sender.send('agent:stream-error', requestId, 'No user message found');
     return;
@@ -293,7 +297,8 @@ async function streamHermes(event, requestId, agent, messages) {
 // ── SSH: non-streaming chat ───────────────────────────────────────────────
 
 async function chatHermes(agent, messages) {
-  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+  const prepared = await prepareMessagesWithFileAttachments(agent, messages, { remote: true });
+  const lastUserMsg = prepared.lastUserMsg;
   if (!lastUserMsg) return { error: 'No user message found' };
 
   const escapedMsg = lastUserMsg.content.replace(/'/g, "'\\''");
