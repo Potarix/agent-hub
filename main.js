@@ -9,7 +9,7 @@ const { setMainWindow, activeClaudeProcs } = require('./lib/state');
 const { makeRequest } = require('./lib/http');
 const { getLoginEnv } = require('./lib/local');
 const { runSSHCommand } = require('./lib/ssh');
-const claudeDesktop = require('./lib/claude-desktop-pin');
+const desktopApp = require('./lib/desktop-app-pin');
 
 // Providers
 const { chatOpenClaw, streamOpenClaw, pingOpenClaw, chatOpenClawLocal, pingOpenClawLocal } = require('./providers/openclaw-improved');
@@ -46,7 +46,7 @@ function createWindow() {
   nativeTheme.themeSource = 'system';
   setMainWindow(mainWindow);
   scheduleUpdateCheck();
-  attachClaudePinListeners(mainWindow);
+  attachDesktopPinListeners(mainWindow);
 
   const updateBgColor = () => {
     const isDark = nativeTheme.shouldUseDarkColors;
@@ -66,165 +66,182 @@ app.whenReady().then(createWindow);
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 
-// ── Claude.app pinning ──
-// Tracks Agent Hub's content-area bounds and continuously re-pins
-// /Applications/Claude.app's window over it via macOS Accessibility APIs.
-// See lib/claude-desktop-pin.js. Layout constants must match index.html's CSS.
+// ── Desktop-app pinning (Claude.app, Codex.app, etc.) ──
+// Tracks Agent Hub's content-area bounds and continuously re-pins the active
+// foreign app's window over it via macOS Accessibility APIs. Only one app is
+// pinned at a time. See lib/desktop-app-pin.js. Layout constants must match
+// index.html's CSS.
 
 const SIDEBAR_WIDTH = 272;     // .sidebar width in index.html
 const TITLEBAR_HEIGHT = 28;    // hiddenInset traffic-light area
 
-let claudePinned = false;
-let claudeMoveT = null;
-let claudeFocusT = null;
-let claudeWatchInterval = null;
-const CLAUDE_REBOUND_DEBOUNCE_MS = 16;
+let pinnedApp = null;          // currently-pinned app key, or null
+let pinMoveT = null;
+let pinFocusT = null;
+let pinWatchInterval = null;
+const PIN_REBOUND_DEBOUNCE_MS = 16;
 
-function computeClaudeRect() {
+function computePinRect() {
   if (!mainWindow || mainWindow.isDestroyed()) return null;
   const b = mainWindow.getBounds();
-  // Hide Claude.app's own title bar behind Agent Hub's title bar by shifting up,
-  // then over-extend height so the bottom still fills.
+  // Tuck the foreign app's chrome behind Agent Hub's title bar by shifting up,
+  // and over-extend height so the bottom still fills.
   const x = b.x + SIDEBAR_WIDTH;
-  const y = b.y + TITLEBAR_HEIGHT - 28; // tuck the chrome behind ours
+  const y = b.y + TITLEBAR_HEIGHT - 28;
   const w = b.width - SIDEBAR_WIDTH;
   const h = b.height - TITLEBAR_HEIGHT + 28;
   return { x, y, w, h };
 }
 
-function reboundClaudeNow() {
-  if (!claudePinned) return;
-  const rect = computeClaudeRect();
+function reboundPinNow() {
+  if (!pinnedApp) return;
+  const rect = computePinRect();
   if (!rect) return;
-  claudeDesktop.setClaudeBounds(rect.x, rect.y, rect.w, rect.h);
+  desktopApp.setBounds(pinnedApp, rect.x, rect.y, rect.w, rect.h);
 }
 
-function reboundClaudeDebounced() {
-  if (!claudePinned) return;
-  if (claudeMoveT) return; // a debounce tick is already scheduled
-  claudeMoveT = setTimeout(() => {
-    claudeMoveT = null;
-    reboundClaudeNow();
-  }, CLAUDE_REBOUND_DEBOUNCE_MS);
+function reboundPinDebounced() {
+  if (!pinnedApp) return;
+  if (pinMoveT) return;
+  pinMoveT = setTimeout(() => {
+    pinMoveT = null;
+    reboundPinNow();
+  }, PIN_REBOUND_DEBOUNCE_MS);
 }
 
-function startClaudeWatch() {
-  if (claudeWatchInterval) return;
+function startPinWatch() {
+  if (pinWatchInterval) return;
   // Periodic re-pin handles cases the BrowserWindow events don't catch:
-  // user dragging Claude.app's own title bar (if exposed), Spaces transitions,
+  // user dragging the foreign app's title bar (if exposed), Spaces transitions,
   // Mission Control, monitor changes.
-  claudeWatchInterval = setInterval(() => {
-    if (!claudePinned) return;
-    if (claudeDesktop.getClaudeWindowCount() === 0) {
-      // User quit Claude.app externally — relaunch
-      claudeDesktop.ensureClaudeRunning().then(() => reboundClaudeNow()).catch(() => {});
+  pinWatchInterval = setInterval(() => {
+    if (!pinnedApp) return;
+    if (desktopApp.getWindowCount(pinnedApp) === 0) {
+      // User quit the app externally — relaunch
+      desktopApp.ensureRunning(pinnedApp).then(() => reboundPinNow()).catch(() => {});
       return;
     }
-    reboundClaudeNow();
+    reboundPinNow();
   }, 1000);
 }
 
-function stopClaudeWatch() {
-  if (claudeWatchInterval) {
-    clearInterval(claudeWatchInterval);
-    claudeWatchInterval = null;
+function stopPinWatch() {
+  if (pinWatchInterval) {
+    clearInterval(pinWatchInterval);
+    pinWatchInterval = null;
   }
 }
 
-function attachClaudePinListeners(win) {
+function attachDesktopPinListeners(win) {
   if (!win) return;
-  win.on('move', reboundClaudeDebounced);
-  win.on('moved', reboundClaudeNow);
-  win.on('resize', reboundClaudeDebounced);
-  win.on('resized', reboundClaudeNow);
-  win.on('enter-full-screen', reboundClaudeNow);
-  win.on('leave-full-screen', reboundClaudeNow);
+  win.on('move', reboundPinDebounced);
+  win.on('moved', reboundPinNow);
+  win.on('resize', reboundPinDebounced);
+  win.on('resized', reboundPinNow);
+  win.on('enter-full-screen', reboundPinNow);
+  win.on('leave-full-screen', reboundPinNow);
   win.on('focus', () => {
-    if (!claudePinned) return;
-    // Defer the raise — when Agent Hub becomes frontmost macOS will repaint;
-    // raising Claude.app right after keeps it visually on top of our content.
-    if (claudeFocusT) clearTimeout(claudeFocusT);
-    claudeFocusT = setTimeout(() => {
-      claudeDesktop.raiseClaudeWindow();
-      claudeFocusT = null;
+    if (!pinnedApp) return;
+    if (pinFocusT) clearTimeout(pinFocusT);
+    pinFocusT = setTimeout(() => {
+      desktopApp.raiseWindow(pinnedApp);
+      pinFocusT = null;
     }, 30);
   });
   win.on('hide', () => {
-    if (claudePinned) claudeDesktop.setClaudeVisible(false);
+    if (pinnedApp) desktopApp.setVisible(pinnedApp, false);
   });
   win.on('show', () => {
-    if (claudePinned) {
-      claudeDesktop.setClaudeVisible(true);
-      reboundClaudeNow();
+    if (pinnedApp) {
+      desktopApp.setVisible(pinnedApp, true);
+      reboundPinNow();
     }
   });
   win.on('close', () => {
-    // Don't quit Claude.app — user may want it standalone next time
-    if (claudePinned) claudeDesktop.setClaudeVisible(true);
-    stopClaudeWatch();
+    // Don't quit the foreign app — user may want it standalone next time
+    if (pinnedApp) desktopApp.setVisible(pinnedApp, true);
+    stopPinWatch();
   });
 }
 
-ipcMain.handle('claude-desktop:status', () => ({
-  installed: claudeDesktop.isClaudeInstalled(),
-  axGranted: claudeDesktop.isAXGranted(),
-  pinned: claudePinned,
-  running: claudeDesktop.getClaudeWindowCount() > 0,
+ipcMain.handle('desktop-app:status', (_e, appKey) => ({
+  installed: desktopApp.isInstalled(appKey),
+  axGranted: desktopApp.isAXGranted(),
+  pinned: pinnedApp === appKey,
+  running: desktopApp.getWindowCount(appKey) > 0,
+  meta: desktopApp.getAppMeta(appKey),
 }));
 
-ipcMain.handle('claude-desktop:pin', async () => {
-  if (!claudeDesktop.isClaudeInstalled()) {
+ipcMain.handle('desktop-app:pin', async (_e, appKey) => {
+  let meta;
+  try { meta = desktopApp.getAppMeta(appKey); } catch (err) { return { error: err.message, code: 'unknown-app' }; }
+
+  if (!desktopApp.isInstalled(appKey)) {
     return {
-      error: 'Claude.app is not installed. Download it from claude.ai/download.',
+      error: `${meta.label} is not installed. Download it from ${meta.downloadUrl}.`,
       code: 'not-installed',
+      downloadUrl: meta.downloadUrl,
     };
   }
-  if (!claudeDesktop.isAXGranted()) {
-    claudeDesktop.requestAX();
+  if (!desktopApp.isAXGranted()) {
+    desktopApp.requestAX();
     return {
-      error: 'Accessibility permission required. Grant Agent Hub access in System Settings → Privacy & Security → Accessibility, then try again.',
+      error: 'Accessibility permission required. Grant Agent Hub access in System Settings → Privacy & Security → Accessibility, then quit and relaunch Agent Hub.',
       code: 'no-ax-permission',
     };
   }
+
+  // Switching pinned apps: hide the previous one first
+  if (pinnedApp && pinnedApp !== appKey) {
+    desktopApp.setVisible(pinnedApp, false);
+  }
+
   try {
-    await claudeDesktop.ensureClaudeRunning();
+    await desktopApp.ensureRunning(appKey);
   } catch (err) {
     return { error: err.message, code: 'launch-failed' };
   }
-  claudePinned = true;
-  reboundClaudeNow();
-  startClaudeWatch();
+  pinnedApp = appKey;
+  reboundPinNow();
+  startPinWatch();
   return { ok: true };
 });
 
-ipcMain.handle('claude-desktop:unpin', async () => {
-  claudePinned = false;
-  stopClaudeWatch();
-  if (claudeMoveT) { clearTimeout(claudeMoveT); claudeMoveT = null; }
-  claudeDesktop.setClaudeVisible(false);
+ipcMain.handle('desktop-app:unpin', async (_e, appKey) => {
+  // Only unpin if the caller's app matches what's currently pinned, or if no
+  // app is specified (force unpin whatever's pinned).
+  if (appKey && pinnedApp !== appKey) return { ok: true, noop: true };
+  const which = pinnedApp;
+  pinnedApp = null;
+  stopPinWatch();
+  if (pinMoveT) { clearTimeout(pinMoveT); pinMoveT = null; }
+  if (which) desktopApp.setVisible(which, false);
   return { ok: true };
 });
 
-ipcMain.handle('claude-desktop:open-ax-settings', () => {
-  claudeDesktop.openAccessibilitySettings();
+ipcMain.handle('desktop-app:open-ax-settings', () => {
+  desktopApp.openAccessibilitySettings();
   return { ok: true };
 });
 
-ipcMain.handle('claude-desktop:quit', () => {
-  claudePinned = false;
-  stopClaudeWatch();
-  claudeDesktop.quitClaude();
+ipcMain.handle('desktop-app:quit', (_e, appKey) => {
+  if (pinnedApp === appKey) {
+    pinnedApp = null;
+    stopPinWatch();
+  }
+  desktopApp.quit(appKey);
   return { ok: true };
 });
 
 app.on('before-quit', () => {
-  // Restore Claude.app to a normal visible state so the user can use it
+  // Restore the foreign app to a normal visible state so the user can use it
   // standalone after Agent Hub closes.
-  if (claudePinned) {
-    claudePinned = false;
-    claudeDesktop.setClaudeVisible(true);
+  if (pinnedApp) {
+    const which = pinnedApp;
+    pinnedApp = null;
+    desktopApp.setVisible(which, true);
   }
-  stopClaudeWatch();
+  stopPinWatch();
 });
 
 // ── Theme IPC ──
@@ -264,8 +281,8 @@ ipcMain.handle('image:save-temp', async (_event, data, ext) => {
 
 ipcMain.handle('agent:chat', async (_event, agent, messages) => {
   try {
-    if (agent.provider === 'claude-desktop') {
-      return { error: 'Claude Desktop threads use the embedded Claude.app — no chat IPC.' };
+    if (agent.provider === 'claude-desktop' || agent.provider === 'codex-desktop') {
+      return { error: 'Embedded desktop-app threads handle their own chat. No IPC.' };
     }
     if (agent.provider === 'openclaw') return await chatOpenClaw(agent, messages);
     if (agent.provider === 'openclaw-local') return await chatOpenClawLocal(agent, messages);
@@ -283,8 +300,8 @@ ipcMain.handle('agent:chat', async (_event, agent, messages) => {
 
 ipcMain.on('agent:chat-stream', async (event, requestId, agent, messages) => {
   try {
-    if (agent.provider === 'claude-desktop') {
-      event.sender.send('agent:stream-error', requestId, 'Claude Desktop threads use the embedded Claude.app — no chat IPC.');
+    if (agent.provider === 'claude-desktop' || agent.provider === 'codex-desktop') {
+      event.sender.send('agent:stream-error', requestId, 'Embedded desktop-app threads handle their own chat. No IPC.');
       return;
     }
     if (agent.provider === 'claude-code') await streamClaudeCode(event, requestId, agent, messages);
@@ -332,11 +349,12 @@ ipcMain.on('agent:permission-response', (_event, requestId, toolUseId, decision)
 ipcMain.handle('agent:ping', async (_event, agent) => {
   try {
     if (agent.provider === 'terminal') return { online: true };
-    if (agent.provider === 'claude-desktop') {
-      if (!claudeDesktop.isClaudeInstalled()) {
-        return { online: false, error: 'Claude.app not installed' };
+    if (agent.provider === 'claude-desktop' || agent.provider === 'codex-desktop') {
+      const appKey = agent.provider === 'claude-desktop' ? 'claude' : 'codex';
+      if (!desktopApp.isInstalled(appKey)) {
+        return { online: false, error: `${desktopApp.getAppMeta(appKey).label} not installed` };
       }
-      return { online: true, info: claudeDesktop.isAXGranted() ? 'AX granted' : 'AX permission needed' };
+      return { online: true, info: desktopApp.isAXGranted() ? 'AX granted' : 'AX permission needed' };
     }
     if (agent.provider === 'terminal-ssh') {
       try {
