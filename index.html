@@ -2027,7 +2027,12 @@
               )}
               {agents.map(ag => (
                 <div key={ag.id} style={{ display: activeId === ag.id ? 'contents' : 'none' }}>
-                  {isTerminalProvider(ag.provider) ? (
+                  {isClaudeDesktopProvider(ag.provider) ? (
+                    <ClaudeDesktopView
+                      agent={ag}
+                      isActive={activeId === ag.id}
+                    />
+                  ) : isTerminalProvider(ag.provider) ? (
                     <TerminalView
                       agent={ag}
                       isActive={activeId === ag.id}
@@ -2109,6 +2114,10 @@
 
     function isTerminalProvider(provider) {
       return provider === 'terminal' || provider === 'terminal-ssh';
+    }
+
+    function isClaudeDesktopProvider(provider) {
+      return provider === 'claude-desktop';
     }
 
     function isFileAttachmentProvider(provider) {
@@ -2295,7 +2304,7 @@
                       )}
                     </div>
                     <div className="agent-provider">
-                      {agent.provider === 'claude-code' ? 'Claude Code' : agent.provider === 'claude-code-ssh' ? 'Claude Code SSH' : agent.provider === 'openclaw-local' ? 'OpenClaw Local' : agent.provider === 'openclaw' ? 'OpenClaw' : agent.provider === 'hermes-local' ? 'Hermes Local' : agent.provider === 'hermes' ? 'Hermes SSH' : agent.provider === 'codex' ? 'Codex' : agent.provider === 'codex-ssh' ? 'Codex SSH' : agent.provider === 'terminal' ? 'Terminal' : agent.provider === 'terminal-ssh' ? 'Terminal SSH' : agent.provider === 'openai-compat' ? 'OpenAI Compat' : agent.provider}
+                      {agent.provider === 'claude-code' ? 'Claude Code' : agent.provider === 'claude-code-ssh' ? 'Claude Code SSH' : agent.provider === 'claude-desktop' ? 'Claude Desktop' : agent.provider === 'openclaw-local' ? 'OpenClaw Local' : agent.provider === 'openclaw' ? 'OpenClaw' : agent.provider === 'hermes-local' ? 'Hermes Local' : agent.provider === 'hermes' ? 'Hermes SSH' : agent.provider === 'codex' ? 'Codex' : agent.provider === 'codex-ssh' ? 'Codex SSH' : agent.provider === 'terminal' ? 'Terminal' : agent.provider === 'terminal-ssh' ? 'Terminal SSH' : agent.provider === 'openai-compat' ? 'OpenAI Compat' : agent.provider}
                       {agent.model ? ` / ${(getStaticModelAliases(agent.provider).find(m => m.id === agent.model) || {}).label || formatModelLabel(agent.model) || agent.model}` : ''}
                     </div>
                   </div>
@@ -3558,6 +3567,109 @@
     }
 
     // ── Terminal View (xterm.js) ──
+    // ClaudeDesktopView: pins /Applications/Claude.app over Agent Hub's
+    // content area while this thread is active. Renders a placeholder div
+    // because the real Claude.app draws everything; only error states and
+    // a "pinning..." overlay are drawn here.
+    function ClaudeDesktopView({ agent, isActive }) {
+      const [pinState, setPinState] = useState({ status: 'idle', error: null, code: null });
+
+      useEffect(() => {
+        let cancelled = false;
+        if (isActive) {
+          setPinState({ status: 'pinning', error: null, code: null });
+          window.agentHub.claudeDesktop.pin().then(res => {
+            if (cancelled) return;
+            if (res?.error) {
+              setPinState({ status: 'error', error: res.error, code: res.code });
+            } else {
+              setPinState({ status: 'pinned', error: null, code: null });
+            }
+          }).catch(err => {
+            if (cancelled) return;
+            setPinState({ status: 'error', error: err.message || String(err), code: 'ipc-error' });
+          });
+        } else {
+          window.agentHub.claudeDesktop.unpin().catch(() => {});
+        }
+        return () => {
+          cancelled = true;
+          if (isActive) window.agentHub.claudeDesktop.unpin().catch(() => {});
+        };
+      }, [isActive]);
+
+      const handleOpenAxSettings = () => {
+        window.agentHub.claudeDesktop.openAxSettings();
+      };
+
+      const handleRetry = () => {
+        setPinState({ status: 'pinning', error: null, code: null });
+        window.agentHub.claudeDesktop.pin().then(res => {
+          if (res?.error) setPinState({ status: 'error', error: res.error, code: res.code });
+          else setPinState({ status: 'pinned', error: null, code: null });
+        });
+      };
+
+      const handleInstall = () => {
+        window.agentHub.openExternal('https://claude.ai/download');
+      };
+
+      return (
+        <div style={{
+          flex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'var(--bg-0)',
+          position: 'relative',
+        }}>
+          {pinState.status === 'pinning' && (
+            <div style={{ textAlign: 'center', color: 'var(--text-2)', fontSize: 13 }}>
+              <div style={{ fontSize: 32, marginBottom: 12 }}>CD</div>
+              <div>Pinning Claude.app to this window…</div>
+            </div>
+          )}
+          {pinState.status === 'pinned' && (
+            <div style={{ textAlign: 'center', color: 'var(--text-2)', fontSize: 12, opacity: 0.5 }}>
+              Claude.app is pinned here. Drag or resize Agent Hub to reflow.
+            </div>
+          )}
+          {pinState.status === 'error' && (
+            <div style={{
+              maxWidth: 480,
+              padding: '24px 28px',
+              background: 'var(--bg-1)',
+              border: '1px solid var(--border)',
+              borderRadius: 12,
+              textAlign: 'left',
+            }}>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10, color: 'var(--text-0)' }}>
+                Couldn't pin Claude Desktop
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--text-1)', lineHeight: 1.5, marginBottom: 16 }}>
+                {pinState.error}
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {pinState.code === 'no-ax-permission' && (
+                  <button className="btn" onClick={handleOpenAxSettings}>
+                    Open System Settings
+                  </button>
+                )}
+                {pinState.code === 'not-installed' && (
+                  <button className="btn" onClick={handleInstall}>
+                    Download Claude Desktop
+                  </button>
+                )}
+                <button className="btn btn-secondary" onClick={handleRetry}>
+                  Retry
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     function TerminalView({ agent, isActive, status, setLastActivityTime }) {
       const containerRef = useRef(null);
       const xtermRef = useRef(null);
@@ -3890,6 +4002,7 @@
 
     // ── Agent Presets ──
     const PRESETS = [
+      { name: 'Claude Desktop', emoji: 'CD', provider: 'claude-desktop', providerClass: 'provider-claude-code', desc: 'Embed the real /Applications/Claude.app with full MCP, skills, extensions' },
       { name: 'Claude Code (Local)', emoji: 'CC', provider: 'claude-code', model: '', workDir: '', providerClass: 'provider-claude-code', desc: 'Local Claude Code CLI instance' },
       { name: 'Claude Code (SSH)', emoji: 'CC', provider: 'claude-code-ssh', sshHost: '', sshUser: 'root', model: '', workDir: '', providerClass: 'provider-claude-code', desc: 'Claude Code on a remote server' },
       { name: 'OpenClaw (Local)', emoji: 'OC', provider: 'openclaw-local', model: '', providerClass: 'provider-openclaws', desc: 'Local OpenClaw gateway' },
@@ -3992,6 +4105,7 @@
       const providerClasses = {
         'claude-code': 'provider-claude-code',
         'claude-code-ssh': 'provider-claude-code',
+        'claude-desktop': 'provider-claude-code',
         'openclaw': 'provider-openclaws',
         'openclaw-local': 'provider-openclaws',
         'hermes': 'provider-hermes',
@@ -4108,6 +4222,7 @@
                 <div className="form-row">
                   <label>Provider</label>
                   <select value={form.provider || ''} onChange={e => setForm(f => ({ ...f, provider: e.target.value }))}>
+                    <option value="claude-desktop">Claude Desktop (embed /Applications/Claude.app)</option>
                     <option value="claude-code">Claude Code (Local)</option>
                     <option value="claude-code-ssh">Claude Code (SSH)</option>
                     <option value="openclaw-local">OpenClaw (Local)</option>

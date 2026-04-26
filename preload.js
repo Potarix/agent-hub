@@ -88,4 +88,14 @@ contextBridge.exposeInMainWorld('agentHub', {
 
   // Save clipboard image to temp file, returns { path } or { error }
   saveImageTemp: (data, ext) => ipcRenderer.invoke('image:save-temp', data, ext),
+
+  // Claude Desktop window-pinning (real /Applications/Claude.app embedded
+  // visually inside Agent Hub's content area via macOS Accessibility APIs)
+  claudeDesktop: {
+    status: () => ipcRenderer.invoke('claude-desktop:status'),
+    pin: () => ipcRenderer.invoke('claude-desktop:pin'),
+    unpin: () => ipcRenderer.invoke('claude-desktop:unpin'),
+    openAxSettings: () => ipcRenderer.invoke('claude-desktop:open-ax-settings'),
+    quit: () => ipcRenderer.invoke('claude-desktop:quit'),
+  },
 });
