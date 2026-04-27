@@ -121,28 +121,36 @@ function pinAndShowNow() {
   if (!pinnedApp) return;
   const rect = computePinRect();
   if (!rect) return;
-  // Stamp before activating so the upcoming Agent Hub blur (caused by us
-  // taking focus) is recognised as an internal activation, not a user click.
-  lastInternalActivateAt = Date.now();
   desktopApp.pinAndShow(pinnedApp, rect.x, rect.y, rect.w, rect.h);
 }
 
-// Tracks the most recent time we (Agent Hub) activated the foreign app
-// programmatically — initial pin, restore from minimize, focus pingpong, or
-// the watch-loop relaunch path. Used to suppress the "user is interacting"
-// signal during those self-triggered activations.
-let lastInternalActivateAt = 0;
-const SELF_ACTIVATE_QUIET_MS = 400;
+// Frontmost-transition detection: the renderer wants to bubble the matching
+// agent up the sidebar whenever the user actively interacts with the pinned
+// foreign app. Blur events alone miss this — the user can type into Claude
+// for minutes without any focus change firing in Agent Hub. So we poll inside
+// the pin watch loop and emit on the false→true transition.
+let lastSeenFrontmost = false;
+let frontmostInFlight = false;
+const FRONTMOST_CHECK_EVERY_N_TICKS = 2;  // 2 * 250ms = 500ms
 
-async function reportInteractionIfUser() {
-  if (!pinnedApp) return;
-  if (Date.now() - lastInternalActivateAt < SELF_ACTIVATE_QUIET_MS) return;
-  // Confirm the foreign app actually has focus — the blur could just as
-  // easily mean the user Cmd-Tabbed to a different app entirely.
-  const frontmost = await desktopApp.isFrontmost(pinnedApp).catch(() => false);
-  if (!frontmost) return;
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('desktop-app:user-active', pinnedApp);
+async function checkFrontmostTransition() {
+  if (frontmostInFlight || !pinnedApp) return;
+  frontmostInFlight = true;
+  const which = pinnedApp;
+  try {
+    const frontmost = await desktopApp.isFrontmost(which);
+    if (pinnedApp !== which) return;
+    const isFrontmostNow = !!frontmost;
+    if (isFrontmostNow && !lastSeenFrontmost) {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('desktop-app:user-active', which);
+      }
+    }
+    lastSeenFrontmost = isFrontmostNow;
+  } catch {
+    // ignore — next tick will retry
+  } finally {
+    frontmostInFlight = false;
   }
 }
 
@@ -158,6 +166,7 @@ function reboundPinDebounced() {
 function startPinWatch() {
   if (pinWatchInterval) return;
   pinTickCounter = 0;
+  lastSeenFrontmost = false;
   // Tight loop: every tick we re-snap position + raise (cheap async osascript,
   // doesn't block the main thread). Every Nth tick we async-verify the window
   // still exists and relaunch if the user externally quit the app.
@@ -165,6 +174,9 @@ function startPinWatch() {
     if (!pinnedApp) return;
     pinTickCounter++;
     snapPinNow();
+    if (pinTickCounter % FRONTMOST_CHECK_EVERY_N_TICKS === 0) {
+      checkFrontmostTransition();
+    }
     if (pinTickCounter % PIN_VERIFY_EVERY_N_TICKS === 0) {
       const which = pinnedApp;
       desktopApp.getWindowCountAsync(which).then(n => {
@@ -221,10 +233,7 @@ function attachDesktopPinListeners(win) {
   win.on('enter-full-screen', snapPinNow);
   win.on('leave-full-screen', snapPinNow);
   win.on('focus', handleAgentHubFocus);
-  win.on('blur', () => {
-    cancelFocusReactivate();
-    reportInteractionIfUser();
-  });
+  win.on('blur', cancelFocusReactivate);
   // Hide / minimize: stop the watch loop too — every snap tick re-asserts
   // `set visible to true`, which would instantly undo our hide otherwise.
   win.on('hide', () => {
