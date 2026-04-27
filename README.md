@@ -36,6 +36,7 @@ Point it at your laptop and it spawns the agent CLI locally. Point it at `omar@p
 ## Highlights
 
 - **Real CLIs under the hood.** Agent Hub wraps the official `claude`, `codex`, `hermes`, and `openclaw` binaries. Every feature the CLI has — `CLAUDE.md`, MCP servers, memory files, slash commands — works identically.
+- **Claude Desktop & Codex Desktop, pinned inside.** If you have Anthropic's Claude.app or OpenAI's Codex.app installed, Agent Hub pins them visually inside its content area via macOS Accessibility APIs. They follow Agent Hub's window: minimize together, restore together. The sidebar stays usable so you can switch between desktop apps and CLI threads with one click.
 - **Local or SSH, per thread.** Switch a thread's target host in one click. Your Mac is the front-end; the agent runs wherever you tell it to.
 - **Granular permissions.** Per-agent `ask`, `acceptEdits`, or `bypassPermissions`. The approval dialog shows the exact tool call and arguments before anything runs.
 - **Slash commands, fuzzy-found.** `/plan`, `/review`, `/compact`, `/memory`, `/cost` — every command registered by every provider, keyboard-searchable.
@@ -58,6 +59,8 @@ Point it at your laptop and it spawns the agent CLI locally. Point it at `omar@p
 |---|---|:---:|:---:|---|
 | [Claude Code](https://docs.claude.com/en/docs/claude-code) | Anthropic | ✓ | ✓ | Uses your `claude` CLI session. `claude-opus-4.7`, `sonnet-4.6`, `haiku-4.5`. |
 | [Codex](https://developers.openai.com/codex) | OpenAI | ✓ | ✓ | `gpt-5.5` with effort levels. |
+| [Claude Desktop](https://claude.ai/download) | Anthropic | ✓ |   | Native Mac app pinned inside Agent Hub's content area. Glued to window minimize/restore. |
+| [Codex Desktop](https://chatgpt.com/codex) | OpenAI | ✓ |   | Native Mac app pinned inside Agent Hub's content area. Glued to window minimize/restore. |
 | Hermes | Nous Research | ✓ | ✓ | Long-horizon research with tool use. |
 | OpenClaw | Open source | ✓ | ✓ | Desktop automation (click, type, file ops). |
 | Terminal | Local/SSH | ✓ | ✓ | Full PTY-backed xterm tab. |
@@ -104,6 +107,11 @@ npm install -g @openai/codex               # Codex (OpenAI)
 ```
 
 Then `claude login` / `codex login`, or drop an API key into Agent Hub's provider settings.
+
+**Optional desktop apps.** If you'd rather use Anthropic's Claude.app or OpenAI's Codex.app, install them and Agent Hub will pin them inside its window automatically. First launch will prompt for **System Settings → Privacy & Security → Accessibility** access (required to position the app's window).
+
+- Claude Desktop: [claude.ai/download](https://claude.ai/download)
+- Codex Desktop: [chatgpt.com/codex](https://chatgpt.com/codex)
 
 ## Usage
 

@@ -2,6 +2,7 @@ const { spawn } = require('child_process');
 const { makeRequest, makeStreamRequest } = require('../lib/http');
 const { runSSHCommand } = require('../lib/ssh');
 const { runLocalCommand } = require('../lib/local');
+const { prepareMessagesWithFileAttachments } = require('../lib/attachments');
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -440,7 +441,8 @@ async function localPing(agent) {
 // ── Main API Functions ─────────────────────────────────────────────────────
 
 async function chatOpenClaw(agent, messages) {
-  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+  const prepared = await prepareMessagesWithFileAttachments(agent, messages, { remote: isRemote(agent) });
+  const lastUserMsg = prepared.lastUserMsg;
   if (!lastUserMsg) return { error: 'No user message found' };
 
   const sessionId = getOrCreateSessionId(agent);
@@ -452,7 +454,7 @@ async function chatOpenClaw(agent, messages) {
 
     // Local: try HTTP API first (if gateway has chatCompletions enabled)
     try {
-      return await localChatHttp(agent, messages, sessionId);
+      return await localChatHttp(agent, prepared.messages, sessionId);
     } catch (httpErr) {
       if (httpErr.code !== 'ECONNREFUSED') {
         // Got a response but not valid — could be Control UI HTML.
@@ -468,7 +470,8 @@ async function chatOpenClaw(agent, messages) {
 }
 
 async function streamOpenClaw(event, requestId, agent, messages) {
-  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+  const prepared = await prepareMessagesWithFileAttachments(agent, messages, { remote: isRemote(agent) });
+  const lastUserMsg = prepared.lastUserMsg;
   if (!lastUserMsg) {
     event.sender.send('agent:stream-error', requestId, 'No user message found');
     return;

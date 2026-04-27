@@ -697,6 +697,70 @@
       transform: scale(1.05);
     }
 
+    .msg-files {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 8px;
+      max-width: 100%;
+    }
+
+    .msg-file {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      max-width: 320px;
+      padding: 7px 9px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      color: inherit;
+    }
+
+    .msg.assistant .msg-file {
+      background: var(--bg-2);
+      border-color: var(--border);
+    }
+
+    .msg-file-icon {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      background: rgba(255, 255, 255, 0.16);
+    }
+
+    .msg.assistant .msg-file-icon {
+      background: var(--bg-3);
+    }
+
+    .msg-file-meta {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .msg-file-name {
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .msg-file-sub {
+      font-size: 10px;
+      opacity: 0.72;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
     .typing-indicator {
       align-self: flex-start;
       display: flex;
@@ -1204,6 +1268,82 @@
 
     .remove-image:hover {
       background: rgba(0, 0, 0, 0.9);
+    }
+
+    .selected-files {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+
+    .file-preview {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      max-width: 260px;
+      padding: 7px 8px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg-2);
+    }
+
+    .file-preview-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      background: var(--bg-3);
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .file-preview-meta {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .file-preview-name {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-0);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .file-preview-sub {
+      font-size: 10px;
+      color: var(--text-2);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .remove-file {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: var(--bg-3);
+      color: var(--text-2);
+      border: none;
+      cursor: pointer;
+      font-size: 15px;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .remove-file:hover {
+      background: var(--bg-4);
+      color: var(--text-0);
     }
 
     .drop-zone {
@@ -1828,6 +1968,23 @@
         });
       }, [agents.length]);
 
+      // When the user clicks into the pinned Claude/Codex desktop app, the
+      // sidebar already sorts by lastActivityTime — bump the matching agent
+      // so it pops to the top.
+      const agentsRef = useRef(agents);
+      useEffect(() => { agentsRef.current = agents; }, [agents]);
+      useEffect(() => {
+        return window.agentHub.desktopApp.onUserActive(appKey => {
+          const provider = appKey === 'claude' ? 'claude-desktop'
+                         : appKey === 'codex'  ? 'codex-desktop'
+                         : null;
+          if (!provider) return;
+          const match = agentsRef.current.find(a => a.provider === provider);
+          if (!match) return;
+          setLastActivityTime(prev => ({ ...prev, [match.id]: Date.now() }));
+        });
+      }, []);
+
       const updateAgent = (updated) => {
         setAgents(prev => {
           const exists = prev.some(a => a.id === updated.id);
@@ -1887,7 +2044,13 @@
               )}
               {agents.map(ag => (
                 <div key={ag.id} style={{ display: activeId === ag.id ? 'contents' : 'none' }}>
-                  {isTerminalProvider(ag.provider) ? (
+                  {isDesktopAppProvider(ag.provider) ? (
+                    <DesktopAppView
+                      agent={ag}
+                      isActive={activeId === ag.id}
+                      appKey={desktopAppKeyFor(ag.provider)}
+                    />
+                  ) : isTerminalProvider(ag.provider) ? (
                     <TerminalView
                       agent={ag}
                       isActive={activeId === ag.id}
@@ -1969,6 +2132,55 @@
 
     function isTerminalProvider(provider) {
       return provider === 'terminal' || provider === 'terminal-ssh';
+    }
+
+    function isClaudeDesktopProvider(provider) {
+      return provider === 'claude-desktop';
+    }
+
+    function isCodexDesktopProvider(provider) {
+      return provider === 'codex-desktop';
+    }
+
+    function isDesktopAppProvider(provider) {
+      return provider === 'claude-desktop' || provider === 'codex-desktop';
+    }
+
+    // Map an embedded-desktop-app provider to its desktop-app-pin.js key.
+    function desktopAppKeyFor(provider) {
+      if (provider === 'claude-desktop') return 'claude';
+      if (provider === 'codex-desktop') return 'codex';
+      return null;
+    }
+
+    function isFileAttachmentProvider(provider) {
+      return provider === 'openclaw' ||
+        provider === 'openclaw-local' ||
+        provider === 'hermes' ||
+        provider === 'hermes-local';
+    }
+
+    function formatFileSize(bytes) {
+      if (!Number.isFinite(bytes) || bytes <= 0) return '';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      let value = bytes;
+      let unit = 0;
+      while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+      }
+      const decimals = value >= 10 || unit === 0 ? 0 : 1;
+      return `${value.toFixed(decimals)} ${units[unit]}`;
+    }
+
+    function FileGlyph({ size = 16 }) {
+      return (
+        <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M4 1.75h5.2L12 4.55v9.7H4V1.75z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
+          <path d="M9 2v3h3" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
+          <path d="M5.8 8.25h4.4M5.8 10.5h4.4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+        </svg>
+      );
     }
 
     function formatModelLabel(modelId) {
@@ -2125,7 +2337,7 @@
                       )}
                     </div>
                     <div className="agent-provider">
-                      {agent.provider === 'claude-code' ? 'Claude Code' : agent.provider === 'claude-code-ssh' ? 'Claude Code SSH' : agent.provider === 'openclaw-local' ? 'OpenClaw Local' : agent.provider === 'openclaw' ? 'OpenClaw' : agent.provider === 'hermes-local' ? 'Hermes Local' : agent.provider === 'hermes' ? 'Hermes SSH' : agent.provider === 'codex' ? 'Codex' : agent.provider === 'codex-ssh' ? 'Codex SSH' : agent.provider === 'terminal' ? 'Terminal' : agent.provider === 'terminal-ssh' ? 'Terminal SSH' : agent.provider === 'openai-compat' ? 'OpenAI Compat' : agent.provider}
+                      {agent.provider === 'claude-code' ? 'Claude Code' : agent.provider === 'claude-code-ssh' ? 'Claude Code SSH' : agent.provider === 'claude-desktop' ? 'Claude Desktop' : agent.provider === 'codex-desktop' ? 'Codex Desktop' : agent.provider === 'openclaw-local' ? 'OpenClaw Local' : agent.provider === 'openclaw' ? 'OpenClaw' : agent.provider === 'hermes-local' ? 'Hermes Local' : agent.provider === 'hermes' ? 'Hermes SSH' : agent.provider === 'codex' ? 'Codex' : agent.provider === 'codex-ssh' ? 'Codex SSH' : agent.provider === 'terminal' ? 'Terminal' : agent.provider === 'terminal-ssh' ? 'Terminal SSH' : agent.provider === 'openai-compat' ? 'OpenAI Compat' : agent.provider}
                       {agent.model ? ` / ${(getStaticModelAliases(agent.provider).find(m => m.id === agent.model) || {}).label || formatModelLabel(agent.model) || agent.model}` : ''}
                     </div>
                   </div>
@@ -2385,6 +2597,7 @@
       const [slashIdx, setSlashIdx] = useState(0);
       const [showThinking, setShowThinking] = useState(true);
       const [selectedImages, setSelectedImages] = useState([]);
+      const [selectedFiles, setSelectedFiles] = useState([]);
       const [isDragging, setIsDragging] = useState(false);
       const [modelOpen, setModelOpen] = useState(false);
       const [effortOpen, setEffortOpen] = useState(false);
@@ -2405,6 +2618,7 @@
       const effortRef = useRef(null);
       const isClaudeProvider = isClaudeCodeProvider(agent.provider);
       const isCodexAgent = isCodexProvider(agent.provider);
+      const supportsFileAttachments = isFileAttachmentProvider(agent.provider);
       const hasModelPicker = isClaudeProvider || isCodexAgent;
       const hasEffortPicker = isClaudeProvider || isCodexAgent;
 
@@ -2760,9 +2974,44 @@
         return { ...baseAgent, allowedTools: merged };
       };
 
-      // Process image files (used by both file input and drag/drop)
-      const processImageFiles = (files) => {
-        const imageFiles = files.filter(file => file.type.startsWith('image/'));
+      const buildFileAttachment = (file) => ({
+        name: file.name || 'Untitled',
+        path: file.path || '',
+        mimeType: file.type || '',
+        size: file.size || 0,
+        isImage: !!file.type && file.type.startsWith('image/'),
+      });
+
+      const addSelectedFiles = (files) => {
+        const attachable = files
+          .map(buildFileAttachment)
+          .filter(file => file.path);
+
+        if (attachable.length === 0) return;
+
+        setSelectedFiles(prev => {
+          const seen = new Set(prev.map(file => file.path || `${file.name}:${file.size}`));
+          const next = [...prev];
+          attachable.forEach(file => {
+            const key = file.path || `${file.name}:${file.size}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              next.push(file);
+            }
+          });
+          return next;
+        });
+      };
+
+      // Process selected files. Images keep the existing visual preview path;
+      // OpenClaw/Hermes also get file-path attachments that their CLIs can read.
+      const processSelectedFiles = (files) => {
+        const fileList = files.filter(Boolean);
+        const imageFiles = fileList.filter(file => file.type.startsWith('image/'));
+
+        if (supportsFileAttachments) {
+          addSelectedFiles(fileList);
+        }
 
         imageFiles.forEach(file => {
           const reader = new FileReader();
@@ -2770,7 +3019,9 @@
             const base64 = e.target.result.split(',')[1]; // Remove data:image/...;base64, prefix
             setSelectedImages(prev => [...prev, {
               name: file.name,
+              path: file.path || '',
               mimeType: file.type,
+              size: file.size || 0,
               base64: base64,
               preview: e.target.result
             }]);
@@ -2779,28 +3030,46 @@
         });
       };
 
-      // Handle image selection
-      const handleImageSelect = (event) => {
+      // Handle attachment selection
+      const handleAttachmentSelect = (event) => {
         const files = Array.from(event.target.files);
-        processImageFiles(files);
+        processSelectedFiles(files);
         // Reset the input
         event.target.value = '';
       };
 
       const removeImage = (index) => {
+        const image = selectedImages[index];
         setSelectedImages(prev => prev.filter((_, i) => i !== index));
+        const hasDuplicateImage = image?.path && selectedImages.some((img, i) => i !== index && img.path === image.path);
+        if (image?.path && !hasDuplicateImage) {
+          setSelectedFiles(prev => prev.filter(file => file.path !== image.path));
+        }
+      };
+
+      const removeFile = (index) => {
+        const visibleFiles = selectedFiles.filter(file => !file.isImage);
+        const file = visibleFiles[index];
+        if (!file) return;
+        setSelectedFiles(prev => prev.filter(item => item.path !== file.path));
       };
 
       // Drag and drop handlers
+      const hasAttachableDragItems = (dataTransfer) => {
+        const items = Array.from(dataTransfer?.items || []);
+        if (items.length === 0) return false;
+        return items.some(item => {
+          if (item.kind !== 'file') return false;
+          return supportsFileAttachments || item.type.startsWith('image/');
+        });
+      };
+
       const handleDragEnter = (e) => {
         e.preventDefault();
         e.stopPropagation();
         dragCounter.current++;
-        if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
-          const hasImages = Array.from(e.dataTransfer.items).some(item => item.type.startsWith('image/'));
-          if (hasImages) {
-            setIsDragging(true);
-          }
+        if (hasAttachableDragItems(e.dataTransfer)) {
+          setIsDragging(true);
         }
       };
 
@@ -2825,7 +3094,7 @@
         dragCounter.current = 0;
 
         const files = Array.from(e.dataTransfer.files);
-        processImageFiles(files);
+        processSelectedFiles(files);
       };
 
       // Add drag and drop listeners to the entire document for the active chat only.
@@ -2847,11 +3116,11 @@
           document.removeEventListener('dragover', handleDragOver);
           document.removeEventListener('drop', handleDrop);
         };
-      }, [isActive]);
+      }, [isActive, supportsFileAttachments]);
 
       const sendMessage = () => {
         const text = input.trim();
-        if (!text && selectedImages.length === 0) return;
+        if (!text && selectedImages.length === 0 && selectedFiles.length === 0) return;
 
         // If it's a slash command, route it (still sequential)
         if (text.startsWith('/')) {
@@ -2860,20 +3129,36 @@
           return;
         }
 
-        const userMsg = { role: 'user', content: text || 'Please analyze these images' };
+        const fallbackContent = selectedFiles.length > 0
+          ? 'Please use the attached files.'
+          : 'Please analyze these images';
+        const userMsg = { role: 'user', content: text || fallbackContent };
 
         // Add images to message if any are selected
         if (selectedImages.length > 0) {
           userMsg.images = selectedImages.map(img => ({
+            name: img.name,
+            path: img.path,
             base64: img.base64,
             mimeType: img.mimeType
+          }));
+        }
+
+        if (selectedFiles.length > 0) {
+          userMsg.files = selectedFiles.map(file => ({
+            name: file.name,
+            path: file.path,
+            mimeType: file.mimeType,
+            size: file.size,
+            isImage: file.isImage,
           }));
         }
 
         setMessages(prev => [...prev, userMsg]);
         setInput('');
         setSelectedImages([]); // Clear selected images after sending
-        setLastUserMessage(text);
+        setSelectedFiles([]);
+        setLastUserMessage(userMsg.content);
         if (inputRef.current) inputRef.current.style.height = 'auto';
 
         // Reset stream state
@@ -3050,7 +3335,7 @@
                 <path d="M7 10l5 5 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                 <path d="M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
-              <span>Drop images anywhere to upload</span>
+              <span>{supportsFileAttachments ? 'Drop files to attach' : 'Drop images to upload'}</span>
             </div>
           </div>
           <div className="chat-header">
@@ -3164,6 +3449,19 @@
                     ))}
                   </div>
                 )}
+                {msg.files && msg.files.filter(file => !file.isImage).length > 0 && (
+                  <div className="msg-files">
+                    {msg.files.filter(file => !file.isImage).map((file, idx) => (
+                      <div key={`${file.path || file.name}-${idx}`} className="msg-file" title={file.path || file.name}>
+                        <span className="msg-file-icon"><FileGlyph size={15} /></span>
+                        <span className="msg-file-meta">
+                          <span className="msg-file-name">{file.name || 'Attachment'}</span>
+                          <span className="msg-file-sub">{formatFileSize(file.size) || file.mimeType || 'File'}</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {msg.role === 'error' && (msg.content.includes('not authenticated') || msg.content.includes('OAuth') || msg.content.includes('auth') || msg.content.includes('setup')) && (
                   <AuthLoginButton agent={agent} onSuccess={() => {
                     setMessages(prev => [...prev, { role: 'assistant', content: 'Authenticated! You can now send messages.' }]);
@@ -3251,6 +3549,20 @@
                 ))}
               </div>
             )}
+            {selectedFiles.filter(file => !file.isImage).length > 0 && (
+              <div className="selected-files">
+                {selectedFiles.filter(file => !file.isImage).map((file, idx) => (
+                  <div key={`${file.path || file.name}-${idx}`} className="file-preview" title={file.path || file.name}>
+                    <span className="file-preview-icon"><FileGlyph size={16} /></span>
+                    <span className="file-preview-meta">
+                      <span className="file-preview-name">{file.name || 'Attachment'}</span>
+                      <span className="file-preview-sub">{formatFileSize(file.size) || file.mimeType || 'File'}</span>
+                    </span>
+                    <button className="remove-file" onClick={() => removeFile(idx)}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="chat-input-wrap">
               <textarea
                 ref={inputRef}
@@ -3269,16 +3581,16 @@
               <label className="btn-attach">
                 <input
                   type="file"
-                  accept="image/*"
+                  accept={supportsFileAttachments ? undefined : 'image/*'}
                   multiple
                   style={{ display: 'none' }}
-                  onChange={handleImageSelect}
+                  onChange={handleAttachmentSelect}
                 />
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
                   <path d="M8 2v12M2 8h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
                 </svg>
               </label>
-              <button className="btn-send" onClick={sendMessage} disabled={!input.trim() && selectedImages.length === 0}>
+              <button className="btn-send" onClick={sendMessage} disabled={!input.trim() && selectedImages.length === 0 && selectedFiles.length === 0}>
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 3l5 5h-3.5v5h-3V8H3l5-5z" fill="currentColor"/></svg>
               </button>
             </div>
@@ -3288,6 +3600,115 @@
     }
 
     // ── Terminal View (xterm.js) ──
+    // DesktopAppView: pins a foreign macOS app (Claude.app, Codex.app, …) over
+    // Agent Hub's content area while this thread is active. Renders a
+    // placeholder div because the real app draws its own UI; only the
+    // "pinning…" status and error overlays are drawn here.
+    const DESKTOP_APP_LABELS = {
+      claude: { name: 'Claude Desktop', initials: 'CD', downloadUrl: 'https://claude.ai/download' },
+      codex: { name: 'Codex Desktop', initials: 'CX', downloadUrl: 'https://chatgpt.com/codex' },
+    };
+
+    function DesktopAppView({ agent, isActive, appKey }) {
+      const [pinState, setPinState] = useState({ status: 'idle', error: null, code: null });
+      const meta = DESKTOP_APP_LABELS[appKey] || { name: 'Desktop App', initials: '?', downloadUrl: '' };
+
+      useEffect(() => {
+        let cancelled = false;
+        if (isActive) {
+          setPinState({ status: 'pinning', error: null, code: null });
+          window.agentHub.desktopApp.pin(appKey).then(res => {
+            if (cancelled) return;
+            if (res?.error) {
+              setPinState({ status: 'error', error: res.error, code: res.code });
+            } else {
+              setPinState({ status: 'pinned', error: null, code: null });
+            }
+          }).catch(err => {
+            if (cancelled) return;
+            setPinState({ status: 'error', error: err.message || String(err), code: 'ipc-error' });
+          });
+        } else {
+          window.agentHub.desktopApp.unpin(appKey).catch(() => {});
+        }
+        return () => {
+          cancelled = true;
+          if (isActive) window.agentHub.desktopApp.unpin(appKey).catch(() => {});
+        };
+      }, [isActive, appKey]);
+
+      const handleOpenAxSettings = () => {
+        window.agentHub.desktopApp.openAxSettings();
+      };
+
+      const handleRetry = () => {
+        setPinState({ status: 'pinning', error: null, code: null });
+        window.agentHub.desktopApp.pin(appKey).then(res => {
+          if (res?.error) setPinState({ status: 'error', error: res.error, code: res.code });
+          else setPinState({ status: 'pinned', error: null, code: null });
+        });
+      };
+
+      const handleInstall = () => {
+        if (meta.downloadUrl) window.agentHub.openExternal(meta.downloadUrl);
+      };
+
+      return (
+        <div style={{
+          flex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'var(--bg-0)',
+          position: 'relative',
+        }}>
+          {pinState.status === 'pinning' && (
+            <div style={{ textAlign: 'center', color: 'var(--text-2)', fontSize: 13 }}>
+              <div style={{ fontSize: 32, marginBottom: 12 }}>{meta.initials}</div>
+              <div>Pinning {meta.name} to this window…</div>
+            </div>
+          )}
+          {pinState.status === 'pinned' && (
+            <div style={{ textAlign: 'center', color: 'var(--text-2)', fontSize: 12, opacity: 0.5 }}>
+              {meta.name} is pinned here. Drag or resize Agent Hub to reflow.
+            </div>
+          )}
+          {pinState.status === 'error' && (
+            <div style={{
+              maxWidth: 480,
+              padding: '24px 28px',
+              background: 'var(--bg-1)',
+              border: '1px solid var(--border)',
+              borderRadius: 12,
+              textAlign: 'left',
+            }}>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10, color: 'var(--text-0)' }}>
+                Couldn't pin {meta.name}
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--text-1)', lineHeight: 1.5, marginBottom: 16 }}>
+                {pinState.error}
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {pinState.code === 'no-ax-permission' && (
+                  <button className="btn" onClick={handleOpenAxSettings}>
+                    Open System Settings
+                  </button>
+                )}
+                {pinState.code === 'not-installed' && meta.downloadUrl && (
+                  <button className="btn" onClick={handleInstall}>
+                    Download {meta.name}
+                  </button>
+                )}
+                <button className="btn btn-secondary" onClick={handleRetry}>
+                  Retry
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     function TerminalView({ agent, isActive, status, setLastActivityTime }) {
       const containerRef = useRef(null);
       const xtermRef = useRef(null);
@@ -3620,6 +4041,8 @@
 
     // ── Agent Presets ──
     const PRESETS = [
+      { name: 'Claude Desktop', emoji: 'CD', provider: 'claude-desktop', providerClass: 'provider-claude-code', desc: 'Embed the real /Applications/Claude.app with full MCP, skills, extensions' },
+      { name: 'Codex Desktop', emoji: 'CX', provider: 'codex-desktop', providerClass: 'provider-codex', desc: 'Embed the real /Applications/Codex.app inside Agent Hub' },
       { name: 'Claude Code (Local)', emoji: 'CC', provider: 'claude-code', model: '', workDir: '', providerClass: 'provider-claude-code', desc: 'Local Claude Code CLI instance' },
       { name: 'Claude Code (SSH)', emoji: 'CC', provider: 'claude-code-ssh', sshHost: '', sshUser: 'root', model: '', workDir: '', providerClass: 'provider-claude-code', desc: 'Claude Code on a remote server' },
       { name: 'OpenClaw (Local)', emoji: 'OC', provider: 'openclaw-local', model: '', providerClass: 'provider-openclaws', desc: 'Local OpenClaw gateway' },
@@ -3722,6 +4145,8 @@
       const providerClasses = {
         'claude-code': 'provider-claude-code',
         'claude-code-ssh': 'provider-claude-code',
+        'claude-desktop': 'provider-claude-code',
+        'codex-desktop': 'provider-codex',
         'openclaw': 'provider-openclaws',
         'openclaw-local': 'provider-openclaws',
         'hermes': 'provider-hermes',
@@ -3838,6 +4263,8 @@
                 <div className="form-row">
                   <label>Provider</label>
                   <select value={form.provider || ''} onChange={e => setForm(f => ({ ...f, provider: e.target.value }))}>
+                    <option value="claude-desktop">Claude Desktop (embed /Applications/Claude.app)</option>
+                    <option value="codex-desktop">Codex Desktop (embed /Applications/Codex.app)</option>
                     <option value="claude-code">Claude Code (Local)</option>
                     <option value="claude-code-ssh">Claude Code (SSH)</option>
                     <option value="openclaw-local">OpenClaw (Local)</option>

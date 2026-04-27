@@ -88,4 +88,22 @@ contextBridge.exposeInMainWorld('agentHub', {
 
   // Save clipboard image to temp file, returns { path } or { error }
   saveImageTemp: (data, ext) => ipcRenderer.invoke('image:save-temp', data, ext),
+
+  // Desktop-app window-pinning — pins a foreign macOS app (Claude.app,
+  // Codex.app) visually inside Agent Hub's content area via Accessibility APIs.
+  // appKey is one of 'claude', 'codex' (see lib/desktop-app-pin.js).
+  desktopApp: {
+    status: (appKey) => ipcRenderer.invoke('desktop-app:status', appKey),
+    pin: (appKey) => ipcRenderer.invoke('desktop-app:pin', appKey),
+    unpin: (appKey) => ipcRenderer.invoke('desktop-app:unpin', appKey),
+    openAxSettings: () => ipcRenderer.invoke('desktop-app:open-ax-settings'),
+    quit: (appKey) => ipcRenderer.invoke('desktop-app:quit', appKey),
+    // Fires with 'claude' or 'codex' when the user clicks into the pinned
+    // foreign app — used to bubble the matching agent up the sidebar.
+    onUserActive: (cb) => {
+      const handler = (_e, appKey) => cb(appKey);
+      ipcRenderer.on('desktop-app:user-active', handler);
+      return () => ipcRenderer.removeListener('desktop-app:user-active', handler);
+    },
+  },
 });
