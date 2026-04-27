@@ -35,6 +35,10 @@ function createWindow() {
     minHeight: 600,
     titleBarStyle: 'hiddenInset',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#0a0a0f' : '#f5f5f7',
+    // Pinned-overlay mode leaves Agent Hub un-focused most of the time. Without
+    // this, Cocoa eats the first click on the sidebar just to activate the
+    // window — so the user has to click twice to actually hit a button.
+    acceptFirstMouse: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -77,9 +81,18 @@ const TITLEBAR_HEIGHT = 28;    // hiddenInset traffic-light area
 
 let pinnedApp = null;          // currently-pinned app key, or null
 let pinMoveT = null;
-let pinFocusT = null;
 let pinWatchInterval = null;
+let pinTickCounter = 0;
+let pinFocusReactivateT = null;
 const PIN_REBOUND_DEBOUNCE_MS = 16;
+const PIN_WATCH_INTERVAL_MS = 250;             // tight loop keeps it sticky
+const PIN_VERIFY_EVERY_N_TICKS = 16;           // ≈4s per window-count probe
+const PIN_FOCUS_REACTIVATE_MS = 90;            // delay before re-raising the
+                                               // foreign app after Agent Hub
+                                               // gains focus
+// Apps we've already brought up in this session — skip ensureRunning probes
+// for these on subsequent pin requests (eliminates the cold-start delay).
+const pinnedReadyApps = new Set();
 
 function computePinRect() {
   if (!mainWindow || mainWindow.isDestroyed()) return null;
@@ -93,11 +106,22 @@ function computePinRect() {
   return { x, y, w, h };
 }
 
-function reboundPinNow() {
+// Position + raise + un-hide in one osascript call. No activate, so Agent Hub
+// keeps focus. Used on Agent Hub focus events and on every watch tick.
+function snapPinNow() {
   if (!pinnedApp) return;
   const rect = computePinRect();
   if (!rect) return;
-  desktopApp.setBounds(pinnedApp, rect.x, rect.y, rect.w, rect.h);
+  desktopApp.snapPin(pinnedApp, rect.x, rect.y, rect.w, rect.h);
+}
+
+// Activate + position + raise. Used on initial pin so the foreign window
+// actually surfaces above Agent Hub's content area.
+function pinAndShowNow() {
+  if (!pinnedApp) return;
+  const rect = computePinRect();
+  if (!rect) return;
+  desktopApp.pinAndShow(pinnedApp, rect.x, rect.y, rect.w, rect.h);
 }
 
 function reboundPinDebounced() {
@@ -105,24 +129,35 @@ function reboundPinDebounced() {
   if (pinMoveT) return;
   pinMoveT = setTimeout(() => {
     pinMoveT = null;
-    reboundPinNow();
+    snapPinNow();
   }, PIN_REBOUND_DEBOUNCE_MS);
 }
 
 function startPinWatch() {
   if (pinWatchInterval) return;
-  // Periodic re-pin handles cases the BrowserWindow events don't catch:
-  // user dragging the foreign app's title bar (if exposed), Spaces transitions,
-  // Mission Control, monitor changes.
+  pinTickCounter = 0;
+  // Tight loop: every tick we re-snap position + raise (cheap async osascript,
+  // doesn't block the main thread). Every Nth tick we async-verify the window
+  // still exists and relaunch if the user externally quit the app.
   pinWatchInterval = setInterval(() => {
     if (!pinnedApp) return;
-    if (desktopApp.getWindowCount(pinnedApp) === 0) {
-      // User quit the app externally — relaunch
-      desktopApp.ensureRunning(pinnedApp).then(() => reboundPinNow()).catch(() => {});
-      return;
+    pinTickCounter++;
+    snapPinNow();
+    if (pinTickCounter % PIN_VERIFY_EVERY_N_TICKS === 0) {
+      const which = pinnedApp;
+      desktopApp.getWindowCountAsync(which).then(n => {
+        if (pinnedApp !== which) return;
+        if (n === 0) {
+          pinnedReadyApps.delete(which);
+          desktopApp.ensureRunning(which).then(() => {
+            if (pinnedApp !== which) return;
+            pinnedReadyApps.add(which);
+            pinAndShowNow();
+          }).catch(() => {});
+        }
+      });
     }
-    reboundPinNow();
-  }, 1000);
+  }, PIN_WATCH_INTERVAL_MS);
 }
 
 function stopPinWatch() {
@@ -132,33 +167,72 @@ function stopPinWatch() {
   }
 }
 
+function cancelFocusReactivate() {
+  if (pinFocusReactivateT) {
+    clearTimeout(pinFocusReactivateT);
+    pinFocusReactivateT = null;
+  }
+}
+
+// When Agent Hub gains focus (user clicked sidebar, title bar, etc.), the
+// pinned foreign app's window goes behind in cross-process z-order. Snap it
+// back into place and, after a short delay so React can process the click,
+// re-activate the foreign app so it pops back on top. Brief focus pingpong
+// is the price of overlay without changing window levels.
+function handleAgentHubFocus() {
+  if (!pinnedApp) return;
+  snapPinNow();
+  cancelFocusReactivate();
+  pinFocusReactivateT = setTimeout(() => {
+    pinFocusReactivateT = null;
+    if (!pinnedApp) return;
+    pinAndShowNow();
+  }, PIN_FOCUS_REACTIVATE_MS);
+}
+
 function attachDesktopPinListeners(win) {
   if (!win) return;
   win.on('move', reboundPinDebounced);
-  win.on('moved', reboundPinNow);
+  win.on('moved', snapPinNow);
   win.on('resize', reboundPinDebounced);
-  win.on('resized', reboundPinNow);
-  win.on('enter-full-screen', reboundPinNow);
-  win.on('leave-full-screen', reboundPinNow);
-  win.on('focus', () => {
-    if (!pinnedApp) return;
-    if (pinFocusT) clearTimeout(pinFocusT);
-    pinFocusT = setTimeout(() => {
-      desktopApp.raiseWindow(pinnedApp);
-      pinFocusT = null;
-    }, 30);
-  });
+  win.on('resized', snapPinNow);
+  win.on('enter-full-screen', snapPinNow);
+  win.on('leave-full-screen', snapPinNow);
+  win.on('focus', handleAgentHubFocus);
+  win.on('blur', cancelFocusReactivate);
+  // Hide / minimize: stop the watch loop too — every snap tick re-asserts
+  // `set visible to true`, which would instantly undo our hide otherwise.
   win.on('hide', () => {
-    if (pinnedApp) desktopApp.setVisible(pinnedApp, false);
+    cancelFocusReactivate();
+    if (pinnedApp) {
+      stopPinWatch();
+      desktopApp.setVisible(pinnedApp, false);
+    }
   });
   win.on('show', () => {
     if (pinnedApp) {
-      desktopApp.setVisible(pinnedApp, true);
-      reboundPinNow();
+      startPinWatch();
+      pinAndShowNow();
+    }
+  });
+  // Yellow traffic light + Window menu → Minimize fire 'minimize', not 'hide'.
+  // Mirror Agent Hub's dock state on the foreign app so they move together.
+  win.on('minimize', () => {
+    cancelFocusReactivate();
+    if (pinnedApp) {
+      stopPinWatch();
+      desktopApp.setVisible(pinnedApp, false);
+    }
+  });
+  win.on('restore', () => {
+    if (pinnedApp) {
+      startPinWatch();
+      pinAndShowNow();
     }
   });
   win.on('close', () => {
     // Don't quit the foreign app — user may want it standalone next time
+    cancelFocusReactivate();
     if (pinnedApp) desktopApp.setVisible(pinnedApp, true);
     stopPinWatch();
   });
@@ -191,19 +265,36 @@ ipcMain.handle('desktop-app:pin', async (_e, appKey) => {
     };
   }
 
-  // Switching pinned apps: hide the previous one first
-  if (pinnedApp && pinnedApp !== appKey) {
-    desktopApp.setVisible(pinnedApp, false);
+  // Switching pinned apps: hide the previous one first (async, doesn't block)
+  const prev = pinnedApp;
+  if (prev && prev !== appKey) {
+    desktopApp.setVisible(prev, false);
+  }
+
+  // Set state immediately so concurrent watch ticks/focus events target the
+  // right app while ensureRunning is in flight.
+  pinnedApp = appKey;
+  startPinWatch();
+
+  // Fast path: we've already brought this app up in this session. Skip the
+  // sync probe entirely and just snap the foreign window into place.
+  if (pinnedReadyApps.has(appKey)) {
+    pinAndShowNow();
+    return { ok: true };
   }
 
   try {
     await desktopApp.ensureRunning(appKey);
   } catch (err) {
+    if (pinnedApp === appKey) {
+      pinnedApp = prev || null;
+      if (!pinnedApp) stopPinWatch();
+    }
     return { error: err.message, code: 'launch-failed' };
   }
-  pinnedApp = appKey;
-  reboundPinNow();
-  startPinWatch();
+  if (pinnedApp !== appKey) return { ok: true };  // user switched away mid-launch
+  pinnedReadyApps.add(appKey);
+  pinAndShowNow();
   return { ok: true };
 });
 
@@ -214,6 +305,7 @@ ipcMain.handle('desktop-app:unpin', async (_e, appKey) => {
   const which = pinnedApp;
   pinnedApp = null;
   stopPinWatch();
+  cancelFocusReactivate();
   if (pinMoveT) { clearTimeout(pinMoveT); pinMoveT = null; }
   if (which) desktopApp.setVisible(which, false);
   return { ok: true };
@@ -228,7 +320,9 @@ ipcMain.handle('desktop-app:quit', (_e, appKey) => {
   if (pinnedApp === appKey) {
     pinnedApp = null;
     stopPinWatch();
+    cancelFocusReactivate();
   }
+  pinnedReadyApps.delete(appKey);
   desktopApp.quit(appKey);
   return { ok: true };
 });
@@ -242,6 +336,7 @@ app.on('before-quit', () => {
     desktopApp.setVisible(which, true);
   }
   stopPinWatch();
+  cancelFocusReactivate();
 });
 
 // ── Theme IPC ──
