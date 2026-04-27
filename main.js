@@ -121,7 +121,29 @@ function pinAndShowNow() {
   if (!pinnedApp) return;
   const rect = computePinRect();
   if (!rect) return;
+  // Stamp before activating so the upcoming Agent Hub blur (caused by us
+  // taking focus) is recognised as an internal activation, not a user click.
+  lastInternalActivateAt = Date.now();
   desktopApp.pinAndShow(pinnedApp, rect.x, rect.y, rect.w, rect.h);
+}
+
+// Tracks the most recent time we (Agent Hub) activated the foreign app
+// programmatically — initial pin, restore from minimize, focus pingpong, or
+// the watch-loop relaunch path. Used to suppress the "user is interacting"
+// signal during those self-triggered activations.
+let lastInternalActivateAt = 0;
+const SELF_ACTIVATE_QUIET_MS = 400;
+
+async function reportInteractionIfUser() {
+  if (!pinnedApp) return;
+  if (Date.now() - lastInternalActivateAt < SELF_ACTIVATE_QUIET_MS) return;
+  // Confirm the foreign app actually has focus — the blur could just as
+  // easily mean the user Cmd-Tabbed to a different app entirely.
+  const frontmost = await desktopApp.isFrontmost(pinnedApp).catch(() => false);
+  if (!frontmost) return;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('desktop-app:user-active', pinnedApp);
+  }
 }
 
 function reboundPinDebounced() {
@@ -199,7 +221,10 @@ function attachDesktopPinListeners(win) {
   win.on('enter-full-screen', snapPinNow);
   win.on('leave-full-screen', snapPinNow);
   win.on('focus', handleAgentHubFocus);
-  win.on('blur', cancelFocusReactivate);
+  win.on('blur', () => {
+    cancelFocusReactivate();
+    reportInteractionIfUser();
+  });
   // Hide / minimize: stop the watch loop too — every snap tick re-asserts
   // `set visible to true`, which would instantly undo our hide otherwise.
   win.on('hide', () => {

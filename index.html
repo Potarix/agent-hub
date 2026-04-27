@@ -1968,6 +1968,23 @@
         });
       }, [agents.length]);
 
+      // When the user clicks into the pinned Claude/Codex desktop app, the
+      // sidebar already sorts by lastActivityTime — bump the matching agent
+      // so it pops to the top.
+      const agentsRef = useRef(agents);
+      useEffect(() => { agentsRef.current = agents; }, [agents]);
+      useEffect(() => {
+        return window.agentHub.desktopApp.onUserActive(appKey => {
+          const provider = appKey === 'claude' ? 'claude-desktop'
+                         : appKey === 'codex'  ? 'codex-desktop'
+                         : null;
+          if (!provider) return;
+          const match = agentsRef.current.find(a => a.provider === provider);
+          if (!match) return;
+          setLastActivityTime(prev => ({ ...prev, [match.id]: Date.now() }));
+        });
+      }, []);
+
       const updateAgent = (updated) => {
         setAgents(prev => {
           const exists = prev.some(a => a.id === updated.id);

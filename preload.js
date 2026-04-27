@@ -98,5 +98,12 @@ contextBridge.exposeInMainWorld('agentHub', {
     unpin: (appKey) => ipcRenderer.invoke('desktop-app:unpin', appKey),
     openAxSettings: () => ipcRenderer.invoke('desktop-app:open-ax-settings'),
     quit: (appKey) => ipcRenderer.invoke('desktop-app:quit', appKey),
+    // Fires with 'claude' or 'codex' when the user clicks into the pinned
+    // foreign app — used to bubble the matching agent up the sidebar.
+    onUserActive: (cb) => {
+      const handler = (_e, appKey) => cb(appKey);
+      ipcRenderer.on('desktop-app:user-active', handler);
+      return () => ipcRenderer.removeListener('desktop-app:user-active', handler);
+    },
   },
 });
