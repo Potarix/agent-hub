@@ -86,6 +86,15 @@ contextBridge.exposeInMainWorld('agentHub', {
   // External links
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
 
+  // Find bar — main process menu (Cmd+F / Cmd+G / Shift+Cmd+G / Cmd+Alt+F)
+  // posts {action: 'open'|'next'|'prev'|'useSelection'|'close'} and the
+  // renderer routes to the active view's find engine.
+  onFindCommand: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('find:command', handler);
+    return () => ipcRenderer.removeListener('find:command', handler);
+  },
+
   // Save clipboard image to temp file, returns { path } or { error }
   saveImageTemp: (data, ext) => ipcRenderer.invoke('image:save-temp', data, ext),
 

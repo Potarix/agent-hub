@@ -15,6 +15,7 @@
   </script>
   <script src="./node_modules/xterm/lib/xterm.js"></script>
   <script src="./node_modules/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
+  <script src="./node_modules/xterm-addon-search/lib/xterm-addon-search.js"></script>
   <script>
     if (window.__nodeModule) { module = window.__nodeModule; exports = window.__nodeExports; delete window.__nodeModule; delete window.__nodeExports; }
   </script>
@@ -341,6 +342,7 @@
       flex-direction: column;
       background: var(--bg-0);
       min-width: 0;
+      position: relative;
     }
 
     /* ── Dashboard (no agent selected) ── */
@@ -1226,6 +1228,96 @@
       cursor: pointer;
     }
 
+    /* ── Find Bar (Cmd+F) ── */
+    .find-bar {
+      position: absolute;
+      top: 8px;
+      right: 16px;
+      z-index: 50;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 8px;
+      background: var(--bg-1);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.04);
+      font-size: 12px;
+      color: var(--text-0);
+      animation: find-bar-in 120ms ease-out;
+    }
+    @keyframes find-bar-in {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .find-bar input.find-input {
+      background: var(--bg-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-0);
+      font-size: 12px;
+      font-family: inherit;
+      padding: 4px 8px;
+      width: 220px;
+      outline: none;
+    }
+    .find-bar input.find-input:focus {
+      border-color: var(--accent);
+    }
+    .find-bar input.find-input.no-match {
+      border-color: var(--red, #d9534f);
+    }
+    .find-bar .find-count {
+      min-width: 56px;
+      text-align: center;
+      color: var(--text-2);
+      font-variant-numeric: tabular-nums;
+      font-size: 11px;
+    }
+    .find-bar button.find-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      color: var(--text-1);
+      font-size: 13px;
+      width: 24px;
+      height: 24px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      padding: 0;
+      transition: background 0.12s;
+    }
+    .find-bar button.find-btn:hover:not(:disabled) {
+      background: var(--bg-3);
+      color: var(--text-0);
+    }
+    .find-bar button.find-btn:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+    .find-bar button.find-btn.toggle.on {
+      background: var(--bg-3);
+      color: var(--text-0);
+      border-color: var(--border);
+    }
+    .find-bar .find-divider {
+      width: 1px;
+      height: 16px;
+      background: var(--border);
+      margin: 0 2px;
+    }
+    /* Chat panel match highlights via CSS Custom Highlight API */
+    ::highlight(ah-find-match) {
+      background-color: rgba(255, 213, 0, 0.35);
+      color: inherit;
+    }
+    ::highlight(ah-find-match-current) {
+      background-color: rgba(255, 165, 0, 0.85);
+      color: #000;
+    }
+
     .selected-images {
       display: flex;
       gap: 8px;
@@ -1786,6 +1878,359 @@
       localStorage.setItem('agent-hub-activity-times', JSON.stringify(times));
     }
 
+    // ── Find / Cmd+F ──
+    // Two engines, one interface: { search(q,opts), next(), prev(), clear(),
+    // refresh() } returning { current, total } for search/next/prev. The chat
+    // engine uses the CSS Custom Highlight API so highlights survive React
+    // reconciliation (no DOM mutation). The terminal engine wraps xterm-addon-
+    // search. The FindBar reads from a single ref the active view registers to.
+
+    const FIND_HIGHLIGHT_NAME = 'ah-find-match';
+    const FIND_HIGHLIGHT_CURRENT_NAME = 'ah-find-match-current';
+    const HAS_HIGHLIGHTS_API = typeof CSS !== 'undefined'
+      && typeof CSS.highlights !== 'undefined'
+      && typeof Highlight !== 'undefined';
+
+    function chatFindEngine(getContainer) {
+      let lastQuery = '';
+      let lastCaseSensitive = false;
+      let ranges = [];
+      let currentIdx = -1;
+      let allHighlight = null;
+      let currentHighlight = null;
+
+      const clearHighlights = () => {
+        if (!HAS_HIGHLIGHTS_API) return;
+        try {
+          CSS.highlights.delete(FIND_HIGHLIGHT_NAME);
+          CSS.highlights.delete(FIND_HIGHLIGHT_CURRENT_NAME);
+        } catch {}
+        allHighlight = null;
+        currentHighlight = null;
+      };
+
+      const writeHighlights = () => {
+        if (!HAS_HIGHLIGHTS_API) return;
+        const others = [];
+        for (let i = 0; i < ranges.length; i++) {
+          if (i !== currentIdx) others.push(ranges[i]);
+        }
+        try {
+          if (others.length) {
+            allHighlight = new Highlight(...others);
+            CSS.highlights.set(FIND_HIGHLIGHT_NAME, allHighlight);
+          } else {
+            CSS.highlights.delete(FIND_HIGHLIGHT_NAME);
+          }
+          if (currentIdx >= 0 && ranges[currentIdx]) {
+            currentHighlight = new Highlight(ranges[currentIdx]);
+            CSS.highlights.set(FIND_HIGHLIGHT_CURRENT_NAME, currentHighlight);
+          } else {
+            CSS.highlights.delete(FIND_HIGHLIGHT_CURRENT_NAME);
+          }
+        } catch {}
+      };
+
+      const collectMatches = (root, needle, caseSensitive) => {
+        const out = [];
+        if (!root || !needle) return out;
+        const cmpNeedle = caseSensitive ? needle : needle.toLowerCase();
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+          acceptNode(n) {
+            // Skip the find bar's own text and any hidden subtree
+            if (!n.nodeValue || !n.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+            let p = n.parentElement;
+            while (p && p !== root) {
+              if (p.classList && p.classList.contains('find-bar')) return NodeFilter.FILTER_REJECT;
+              p = p.parentElement;
+            }
+            return NodeFilter.FILTER_ACCEPT;
+          },
+        });
+        let node;
+        while ((node = walker.nextNode())) {
+          const text = caseSensitive ? node.nodeValue : node.nodeValue.toLowerCase();
+          let from = 0;
+          while (true) {
+            const idx = text.indexOf(cmpNeedle, from);
+            if (idx === -1) break;
+            try {
+              const r = document.createRange();
+              r.setStart(node, idx);
+              r.setEnd(node, idx + needle.length);
+              out.push(r);
+            } catch {}
+            from = idx + needle.length;
+            if (out.length > 5000) return out; // safety cap
+          }
+        }
+        return out;
+      };
+
+      const scrollCurrentIntoView = () => {
+        if (currentIdx < 0 || !ranges[currentIdx]) return;
+        try {
+          const rect = ranges[currentIdx].getBoundingClientRect();
+          const container = getContainer();
+          if (!container) return;
+          const cRect = container.getBoundingClientRect();
+          if (rect.top < cRect.top + 40 || rect.bottom > cRect.bottom - 40) {
+            const node = ranges[currentIdx].startContainer.parentElement;
+            if (node && node.scrollIntoView) {
+              node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            }
+          }
+        } catch {}
+      };
+
+      return {
+        type: 'chat',
+        search(q, opts) {
+          lastQuery = q || '';
+          lastCaseSensitive = !!(opts && opts.caseSensitive);
+          if (!lastQuery) {
+            ranges = [];
+            currentIdx = -1;
+            clearHighlights();
+            return { current: 0, total: 0 };
+          }
+          const container = getContainer();
+          ranges = collectMatches(container, lastQuery, lastCaseSensitive);
+          currentIdx = ranges.length ? 0 : -1;
+          writeHighlights();
+          scrollCurrentIntoView();
+          return { current: currentIdx + 1, total: ranges.length };
+        },
+        next() {
+          if (!ranges.length) return { current: 0, total: 0 };
+          currentIdx = (currentIdx + 1) % ranges.length;
+          writeHighlights();
+          scrollCurrentIntoView();
+          return { current: currentIdx + 1, total: ranges.length };
+        },
+        prev() {
+          if (!ranges.length) return { current: 0, total: 0 };
+          currentIdx = (currentIdx - 1 + ranges.length) % ranges.length;
+          writeHighlights();
+          scrollCurrentIntoView();
+          return { current: currentIdx + 1, total: ranges.length };
+        },
+        clear() {
+          ranges = [];
+          currentIdx = -1;
+          lastQuery = '';
+          clearHighlights();
+        },
+        refresh() {
+          if (!lastQuery) return { current: 0, total: 0 };
+          const container = getContainer();
+          ranges = collectMatches(container, lastQuery, lastCaseSensitive);
+          if (currentIdx >= ranges.length) currentIdx = ranges.length ? 0 : -1;
+          if (currentIdx < 0 && ranges.length) currentIdx = 0;
+          writeHighlights();
+          return { current: currentIdx + 1, total: ranges.length };
+        },
+      };
+    }
+
+    function terminalFindEngine(getTerm, getSearch) {
+      let lastQuery = '';
+      let lastCaseSensitive = false;
+      let lastResult = { resultIndex: -1, resultCount: 0 };
+      let lastListenerAttached = false;
+      const ensureListener = () => {
+        const search = getSearch();
+        if (!search || lastListenerAttached) return;
+        try {
+          search.onDidChangeResults((e) => {
+            // xterm-addon-search emits {resultIndex, resultCount}
+            if (e && typeof e.resultCount === 'number') {
+              lastResult = { resultIndex: e.resultIndex, resultCount: e.resultCount };
+            }
+          });
+          lastListenerAttached = true;
+        } catch {}
+      };
+      const opts = (caseSensitive) => ({
+        caseSensitive: !!caseSensitive,
+        regex: false,
+        wholeWord: false,
+        decorations: {
+          matchBackground: 'rgba(255, 213, 0, 0.35)',
+          matchOverviewRuler: '#ffd500',
+          activeMatchBackground: 'rgba(255, 165, 0, 0.85)',
+          activeMatchColorOverviewRuler: '#ff9500',
+        },
+      });
+      return {
+        type: 'terminal',
+        search(q, o) {
+          ensureListener();
+          lastQuery = q || '';
+          lastCaseSensitive = !!(o && o.caseSensitive);
+          const search = getSearch();
+          if (!search) return { current: 0, total: 0 };
+          if (!lastQuery) {
+            try { search.clearDecorations(); } catch {}
+            lastResult = { resultIndex: -1, resultCount: 0 };
+            return { current: 0, total: 0 };
+          }
+          try { search.findNext(lastQuery, opts(lastCaseSensitive)); } catch {}
+          return {
+            current: lastResult.resultCount > 0 ? (lastResult.resultIndex + 1) : 0,
+            total: lastResult.resultCount,
+          };
+        },
+        next() {
+          const search = getSearch();
+          if (!search || !lastQuery) return { current: 0, total: 0 };
+          try { search.findNext(lastQuery, opts(lastCaseSensitive)); } catch {}
+          return {
+            current: lastResult.resultCount > 0 ? (lastResult.resultIndex + 1) : 0,
+            total: lastResult.resultCount,
+          };
+        },
+        prev() {
+          const search = getSearch();
+          if (!search || !lastQuery) return { current: 0, total: 0 };
+          try { search.findPrevious(lastQuery, opts(lastCaseSensitive)); } catch {}
+          return {
+            current: lastResult.resultCount > 0 ? (lastResult.resultIndex + 1) : 0,
+            total: lastResult.resultCount,
+          };
+        },
+        clear() {
+          const search = getSearch();
+          lastQuery = '';
+          lastResult = { resultIndex: -1, resultCount: 0 };
+          if (search) { try { search.clearDecorations(); } catch {} }
+        },
+        refresh() {
+          if (!lastQuery) return { current: 0, total: 0 };
+          // Re-running findNext from current position keeps results fresh
+          // when new terminal output streams in.
+          const search = getSearch();
+          if (search) { try { search.findNext(lastQuery, opts(lastCaseSensitive)); } catch {} }
+          return {
+            current: lastResult.resultCount > 0 ? (lastResult.resultIndex + 1) : 0,
+            total: lastResult.resultCount,
+          };
+        },
+      };
+    }
+
+    function FindBar({ findApiRef, open, query, setQuery, caseSensitive, setCaseSensitive,
+                       status, setStatus, onClose }) {
+      const inputRef = useRef(null);
+
+      useEffect(() => {
+        if (open) {
+          // Focus + select on open
+          requestAnimationFrame(() => {
+            try {
+              inputRef.current?.focus();
+              inputRef.current?.select();
+            } catch {}
+          });
+        }
+      }, [open]);
+
+      // Re-run search when query or caseSensitive changes (debounced).
+      useEffect(() => {
+        if (!open) return;
+        const api = findApiRef.current;
+        if (!api) {
+          setStatus({ current: 0, total: 0 });
+          return;
+        }
+        const t = setTimeout(() => {
+          const r = api.search(query, { caseSensitive });
+          setStatus(r);
+        }, 60);
+        return () => clearTimeout(t);
+      }, [open, query, caseSensitive]);
+
+      if (!open) return null;
+
+      const noMatch = query.length > 0 && status.total === 0;
+      const countLabel = query.length === 0
+        ? 'Find'
+        : status.total === 0 ? 'No results'
+        : `${status.current} of ${status.total}`;
+
+      const stepNext = () => {
+        const api = findApiRef.current;
+        if (!api) return;
+        setStatus(api.next());
+      };
+      const stepPrev = () => {
+        const api = findApiRef.current;
+        if (!api) return;
+        setStatus(api.prev());
+      };
+
+      const onKeyDown = (e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          onClose();
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          if (e.shiftKey) stepPrev();
+          else stepNext();
+        } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'g') {
+          e.preventDefault();
+          if (e.shiftKey) stepPrev();
+          else stepNext();
+        }
+      };
+
+      return (
+        <div className="find-bar" role="search" aria-label="Find in view">
+          <input
+            ref={inputRef}
+            className={`find-input ${noMatch ? 'no-match' : ''}`}
+            type="text"
+            placeholder="Find"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={onKeyDown}
+            spellCheck={false}
+            autoCorrect="off"
+            autoCapitalize="off"
+          />
+          <span className="find-count">{countLabel}</span>
+          <button
+            className={`find-btn toggle ${caseSensitive ? 'on' : ''}`}
+            onClick={() => setCaseSensitive(c => !c)}
+            title={caseSensitive ? 'Case sensitive (on)' : 'Case sensitive (off)'}
+            aria-pressed={caseSensitive}
+          >Aa</button>
+          <span className="find-divider" />
+          <button
+            className="find-btn"
+            onClick={stepPrev}
+            disabled={status.total === 0}
+            title="Previous (Shift+Cmd+G)"
+            aria-label="Previous match"
+          >&#8593;</button>
+          <button
+            className="find-btn"
+            onClick={stepNext}
+            disabled={status.total === 0}
+            title="Next (Cmd+G)"
+            aria-label="Next match"
+          >&#8595;</button>
+          <span className="find-divider" />
+          <button
+            className="find-btn"
+            onClick={onClose}
+            title="Close (Esc)"
+            aria-label="Close find bar"
+          >&#10005;</button>
+        </div>
+      );
+    }
+
     // ── Auth Login Button (in-app, no terminal) ──
     function AuthLoginButton({ agent, onSuccess }) {
       const [authState, setAuthState] = useState('idle'); // idle | logging-in | waiting-for-code | success | error
@@ -1931,7 +2376,73 @@
       const [loadingAgents, setLoadingAgents] = useState(new Set());
       const [lastActivityTime, setLastActivityTime] = useState(loadLastActivityTime);
 
+      // Find bar (Cmd+F) — single instance for the whole window. Routes to the
+      // active view's engine via findApiRef. The engine is registered by the
+      // active view (ChatView or TerminalView) on mount/activation.
+      const findApiRef = useRef(null);
+      const [findOpen, setFindOpen] = useState(false);
+      const [findQuery, setFindQuery] = useState('');
+      const [findCase, setFindCase] = useState(false);
+      const [findStatus, setFindStatus] = useState({ current: 0, total: 0 });
+
       const activeAgent = agents.find(a => a.id === activeId);
+      const findAvailable = !!activeAgent && !isDesktopAppProvider(activeAgent.provider);
+
+      const closeFind = useCallback(() => {
+        try { findApiRef.current?.clear(); } catch {}
+        setFindOpen(false);
+        setFindQuery('');
+        setFindStatus({ current: 0, total: 0 });
+      }, []);
+
+      const openFind = useCallback(() => {
+        if (!findAvailable) return;
+        setFindOpen(true);
+      }, [findAvailable]);
+
+      // Wire the menu accelerators (Cmd+F / Cmd+G / Shift+Cmd+G / Cmd+Alt+F)
+      useEffect(() => {
+        if (!window.agentHub.onFindCommand) return;
+        const off = window.agentHub.onFindCommand(({ action }) => {
+          if (action === 'open') {
+            if (!findAvailable) return;
+            // If already open, just refocus the input (handled by FindBar effect)
+            if (findOpen) {
+              setFindOpen(false);
+              setTimeout(() => setFindOpen(true), 0);
+            } else {
+              setFindOpen(true);
+            }
+          } else if (action === 'close') {
+            closeFind();
+          } else if (action === 'next') {
+            const api = findApiRef.current;
+            if (!findAvailable || !api) return;
+            if (!findOpen) setFindOpen(true);
+            if (findQuery) setFindStatus(api.next());
+          } else if (action === 'prev') {
+            const api = findApiRef.current;
+            if (!findAvailable || !api) return;
+            if (!findOpen) setFindOpen(true);
+            if (findQuery) setFindStatus(api.prev());
+          } else if (action === 'useSelection') {
+            const sel = String(window.getSelection?.() || '').trim();
+            if (!findAvailable) return;
+            if (sel) {
+              setFindQuery(sel);
+              setFindOpen(true);
+            } else {
+              setFindOpen(true);
+            }
+          }
+        });
+        return off;
+      }, [findAvailable, findOpen, findQuery, closeFind]);
+
+      // Close the find bar when switching agents (matches Slack/native macOS).
+      useEffect(() => {
+        closeFind();
+      }, [activeId, closeFind]);
 
       useEffect(() => { saveAgents(agents); }, [agents]);
       useEffect(() => { saveChats(chats); }, [chats]);
@@ -2056,6 +2567,7 @@
                       isActive={activeId === ag.id}
                       status={statuses[ag.id]}
                       setLastActivityTime={setLastActivityTime}
+                      findApiRef={findApiRef}
                     />
                   ) : (
                     <ChatView
@@ -2076,10 +2588,22 @@
                         });
                       }}
                       setLastActivityTime={setLastActivityTime}
+                      findApiRef={findApiRef}
                     />
                   )}
                 </div>
               ))}
+              <FindBar
+                findApiRef={findApiRef}
+                open={findOpen && findAvailable}
+                query={findQuery}
+                setQuery={setFindQuery}
+                caseSensitive={findCase}
+                setCaseSensitive={setFindCase}
+                status={findStatus}
+                setStatus={setFindStatus}
+                onClose={closeFind}
+              />
             </div>
           </div>
 
@@ -2580,7 +3104,7 @@
       );
     }
 
-    function ChatView({ agent, isActive, status, messages, setMessages, onUpdateAgent, completionStatus, setCompletionStatus, onLoadingChange, setLastActivityTime }) {
+    function ChatView({ agent, isActive, status, messages, setMessages, onUpdateAgent, completionStatus, setCompletionStatus, onLoadingChange, setLastActivityTime, findApiRef }) {
       const [input, setInput] = useState('');
       const [loading, setLoading] = useState(false);
       const [streamText, setStreamText] = useState('');
@@ -2631,6 +3155,28 @@
         document.addEventListener('mousedown', handler);
         return () => document.removeEventListener('mousedown', handler);
       }, []);
+
+      // Register the chat find engine while this view is active. The engine
+      // closes over chatAreaRef.current so it always sees the live container.
+      useEffect(() => {
+        if (!isActive || !findApiRef) return;
+        const engine = chatFindEngine(() => chatAreaRef.current);
+        findApiRef.current = engine;
+        return () => {
+          try { engine.clear(); } catch {}
+          if (findApiRef.current === engine) findApiRef.current = null;
+        };
+      }, [isActive, agent.id]);
+
+      // Re-run the active query when messages change (streaming output, etc.)
+      // so the highlight count stays accurate.
+      useEffect(() => {
+        if (!isActive || !findApiRef) return;
+        const api = findApiRef.current;
+        if (!api || api.type !== 'chat') return;
+        const t = setTimeout(() => { try { api.refresh(); } catch {} }, 80);
+        return () => clearTimeout(t);
+      }, [isActive, messages, streamText, streamThinking]);
 
       useEffect(() => {
         if (!isCodexAgent) {
@@ -3709,10 +4255,11 @@
       );
     }
 
-    function TerminalView({ agent, isActive, status, setLastActivityTime }) {
+    function TerminalView({ agent, isActive, status, setLastActivityTime, findApiRef }) {
       const containerRef = useRef(null);
       const xtermRef = useRef(null);
       const fitAddonRef = useRef(null);
+      const searchAddonRef = useRef(null);
       const spawnedRef = useRef(false);
       const openedRef = useRef(false);
       const [exited, setExited] = useState(false);
@@ -3787,8 +4334,16 @@
         });
         const fitAddon = new FitAddon.FitAddon();
         term.loadAddon(fitAddon);
+        let searchAddon = null;
+        try {
+          if (typeof SearchAddon !== 'undefined') {
+            searchAddon = new SearchAddon.SearchAddon();
+            term.loadAddon(searchAddon);
+          }
+        } catch {}
         xtermRef.current = term;
         fitAddonRef.current = fitAddon;
+        searchAddonRef.current = searchAddon;
 
         // Listen for theme changes
         const onTheme = (dark) => {
@@ -3892,6 +4447,7 @@
           term.dispose();
           xtermRef.current = null;
           fitAddonRef.current = null;
+          searchAddonRef.current = null;
           // Detach only — keep tmux session alive so claude/codex survive
           // app close and reattach on next launch.
           window.agentHub.terminalDetach(agent.id);
@@ -3993,6 +4549,20 @@
         };
         window.addEventListener('resize', onResize);
         return () => window.removeEventListener('resize', onResize);
+      }, [isActive, agent.id]);
+
+      // Register the find engine while this terminal is the active view.
+      useEffect(() => {
+        if (!isActive || !findApiRef) return;
+        const engine = terminalFindEngine(
+          () => xtermRef.current,
+          () => searchAddonRef.current,
+        );
+        findApiRef.current = engine;
+        return () => {
+          try { engine.clear(); } catch {}
+          if (findApiRef.current === engine) findApiRef.current = null;
+        };
       }, [isActive, agent.id]);
 
       const handleRestart = () => {
