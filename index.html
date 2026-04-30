@@ -4513,6 +4513,51 @@
         };
       }, [agent.id]);
 
+      // Wheel-in-alt-screen fallback. The primary scroll path is SGR mouse
+      // events: tmux is started with `mouse on`, so xterm.js's mouse mode
+      // activates and forwards real wheel events through the PTY (handled
+      // natively by Claude Code / Codex / vim). When that path is live,
+      // xterm.js adds the .enable-mouse-events class to its element and we
+      // bail out of this handler so xterm.js owns the wheel.
+      //
+      // The fallback below only fires when mouse mode is NOT active (e.g.
+      // tmux is unavailable on a remote host, or an inner program disables
+      // mouse tracking). Without it, xterm.js's default in alt-screen is to
+      // emit ESC[A / ESC[B per wheel notch, which Claude Code interprets
+      // as input-history navigation and warns about. PgUp/PgDn are at least
+      // harmless for those programs.
+      useEffect(() => {
+        const el = containerRef.current;
+        if (!el) return;
+        // Normalize deltaY across deltaMode (0=px, 1=line, 2=page).
+        const PX_PER_LINE = 16;
+        const PX_PER_PAGE = 400;
+        const STEP = 40; // px of accumulated scroll per PgUp/PgDn key
+        let accum = 0;
+        const onWheel = (e) => {
+          if (e.deltaY === 0) return;
+          const term = xtermRef.current;
+          // SGR mouse path is live: let xterm.js handle wheel as mouse events.
+          if (term?.element?.classList.contains('enable-mouse-events')) return;
+          const buf = term?.buffer?.active;
+          if (!buf || buf.type !== 'alternate') return; // normal screen: let xterm scroll
+          e.preventDefault();
+          e.stopPropagation();
+          const px =
+            e.deltaMode === 1 ? e.deltaY * PX_PER_LINE :
+            e.deltaMode === 2 ? e.deltaY * PX_PER_PAGE :
+            e.deltaY;
+          accum += px;
+          while (Math.abs(accum) >= STEP) {
+            const seq = accum < 0 ? '\x1b[5~' : '\x1b[6~'; // PgUp / PgDn
+            window.agentHub.terminalInput(agent.id, seq);
+            accum += accum < 0 ? STEP : -STEP;
+          }
+        };
+        el.addEventListener('wheel', onWheel, { capture: true, passive: false });
+        return () => el.removeEventListener('wheel', onWheel, { capture: true });
+      }, [agent.id]);
+
       // Open + spawn when first activated (container must be visible for dimensions)
       useEffect(() => {
         if (!isActive || !xtermRef.current || !containerRef.current) return;
