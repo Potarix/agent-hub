@@ -638,14 +638,26 @@ function hasLocalTmux() {
 }
 
 // Shell snippet that attaches to (or creates) a tmux session, falling back to
-// a plain login shell if tmux isn't installed on the target host. `-D` kicks
-// any other client off the session so the newest tab wins.
+// a plain login shell if tmux isn't installed on the target host. `-d` on the
+// attach kicks any other client off the session so the newest tab wins.
+//
+// `mouse on` is set per-session so wheel events propagate end-to-end:
+// xterm.js sees tmux's DECSET 1000+1006, sends real SGR mouse events, and
+// tmux forwards them to programs that asked for mouse tracking (Claude Code,
+// Codex) so their internal scroll works. Programs that don't request mouse
+// tracking fall back to tmux's own pane scrollback. Without this, xterm.js
+// translated wheel into cursor up/down arrow keys (the source of Claude
+// Code's "scroll wheel is sending arrow keys" warning).
 function buildTmuxCommand(name, cwd) {
+  const qname = shQuote(name);
   const cwdArg = cwd ? ` -c ${shQuote(cwd)}` : '';
   const cdLine = cwd ? `cd ${shQuote(cwd)} 2>/dev/null; ` : '';
   return (
     `if command -v tmux >/dev/null 2>&1; then ` +
-      `exec tmux new-session -A -D -s ${shQuote(name)}${cwdArg}; ` +
+      `tmux has-session -t ${qname} 2>/dev/null || ` +
+      `tmux new-session -d -s ${qname}${cwdArg}; ` +
+      `tmux set-option -t ${qname} mouse on >/dev/null 2>&1; ` +
+      `exec tmux attach-session -dt ${qname}; ` +
     `else ` +
       `${cdLine}exec "$SHELL" -l; ` +
     `fi`
