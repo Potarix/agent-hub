@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, nativeTheme, shell } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, nativeTheme, shell } = require('electron');
 const { spawn, spawnSync, execSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -27,6 +27,92 @@ const { registerUpdaterHandlers, scheduleUpdateCheck } = require('./lib/updater'
 
 let mainWindow;
 
+// Application menu. Native macOS roles for the standard items, plus an
+// Edit ▸ Find submenu whose accelerators (⌘F, ⌘G, ⇧⌘G, Esc-equivalent) post
+// IPC to the renderer so it can show its own find bar. We do NOT use
+// webContents.findInPage — the chat panel uses the CSS Custom Highlight API
+// and the terminal panel uses xterm-addon-search.
+function buildAppMenu(win) {
+  const sendFind = (action) => {
+    if (!win || win.isDestroyed()) return;
+    win.webContents.send('find:command', { action });
+  };
+  const isMac = process.platform === 'darwin';
+  const template = [
+    ...(isMac ? [{
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    }] : []),
+    {
+      label: 'File',
+      submenu: [isMac ? { role: 'close' } : { role: 'quit' }],
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'pasteAndMatchStyle' },
+        { role: 'delete' },
+        { role: 'selectAll' },
+        { type: 'separator' },
+        {
+          label: 'Find',
+          submenu: [
+            { label: 'Find…', accelerator: 'CmdOrCtrl+F', click: () => sendFind('open') },
+            { label: 'Find Next', accelerator: 'CmdOrCtrl+G', click: () => sendFind('next') },
+            { label: 'Find Previous', accelerator: 'Shift+CmdOrCtrl+G', click: () => sendFind('prev') },
+            { label: 'Use Selection for Find', accelerator: 'CmdOrCtrl+E', click: () => sendFind('useSelection') },
+            { label: 'Hide Find Bar', accelerator: 'CmdOrCtrl+Alt+F', click: () => sendFind('close') },
+          ],
+        },
+      ],
+    },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
+    {
+      label: 'Window',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        ...(isMac ? [
+          { type: 'separator' },
+          { role: 'front' },
+        ] : [
+          { role: 'close' },
+        ]),
+      ],
+    },
+  ];
+  return Menu.buildFromTemplate(template);
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -49,6 +135,7 @@ function createWindow() {
   mainWindow.loadFile('index.html');
   nativeTheme.themeSource = 'system';
   setMainWindow(mainWindow);
+  Menu.setApplicationMenu(buildAppMenu(mainWindow));
   scheduleUpdateCheck();
   attachDesktopPinListeners(mainWindow);
 
