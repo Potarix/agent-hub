@@ -4394,6 +4394,23 @@
         brightWhite: '#2d3436',
       };
 
+      const installMouseSelectionBridge = (term) => {
+        const selectionService = term?._core?._selectionService;
+        if (!selectionService || selectionService._agentHubMouseSelectionPatched) return;
+        const originalShouldForceSelection = selectionService.shouldForceSelection?.bind(selectionService);
+        if (!originalShouldForceSelection) return;
+
+        // tmux mouse mode keeps terminal-app scrolling working, but xterm
+        // disables normal selection while mouse reporting is active. Force
+        // primary-button drags down xterm's selection path; wheel events still
+        // flow through to tmux/Claude/Codex.
+        selectionService.shouldForceSelection = (event) => {
+          if (event?.button === 0 && !event.ctrlKey && !event.metaKey) return true;
+          return originalShouldForceSelection(event);
+        };
+        selectionService._agentHubMouseSelectionPatched = true;
+      };
+
       // Create xterm and spawn PTY
       useEffect(() => {
         const term = new Terminal({
@@ -4666,10 +4683,10 @@
         };
       }, [agent.id]);
 
-      // Wheel-in-alt-screen fallback. We keep tmux mouse mode off so normal
-      // drag selects text without holding Option. In alternate-screen apps
-      // that would otherwise receive cursor up/down from wheel events, send
-      // PgUp/PgDn instead.
+      // Wheel-in-alt-screen fallback. The primary scroll path is tmux mouse
+      // mode: xterm forwards wheel events as mouse reports, then tmux forwards
+      // them to terminal apps that requested mouse tracking. This fallback only
+      // covers shells/programs where that path is not active.
       useEffect(() => {
         const el = containerRef.current;
         if (!el) return;
@@ -4708,6 +4725,7 @@
 
         if (!openedRef.current) {
           xtermRef.current.open(containerRef.current);
+          installMouseSelectionBridge(xtermRef.current);
           fitAddonRef.current.fit();
           openedRef.current = true;
           // Register this xterm so the App-level Cmd+C/V dispatcher can
