@@ -668,10 +668,9 @@ function hasLocalTmux() {
 // a plain login shell if tmux isn't installed on the target host. `-d` on the
 // attach kicks any other client off the session so the newest tab wins.
 //
-// Keep tmux mouse mode off so normal drag selects text in xterm. When tmux
-// mouse mode is on, xterm sends drag events into tmux/Codex/Claude and macOS
-// requires Option-drag to force a terminal selection, which makes Cmd+C feel
-// broken.
+// Keep tmux mouse mode on so wheel events propagate end-to-end to Claude Code,
+// Codex, vim, and tmux panes. The renderer forces normal xterm selection on
+// primary-button drags so copy/highlight still behave like a regular terminal.
 function buildTmuxCommand(name, cwd) {
   const qname = shQuote(name);
   const cwdArg = cwd ? ` -c ${shQuote(cwd)}` : '';
@@ -680,7 +679,7 @@ function buildTmuxCommand(name, cwd) {
     `if command -v tmux >/dev/null 2>&1; then ` +
       `tmux has-session -t ${qname} 2>/dev/null || ` +
       `tmux new-session -d -s ${qname}${cwdArg}; ` +
-      `tmux set-option -t ${qname} mouse off >/dev/null 2>&1; ` +
+      `tmux set-option -t ${qname} mouse on >/dev/null 2>&1; ` +
       `exec tmux attach-session -dt ${qname}; ` +
     `else ` +
       `${cdLine}exec "$SHELL" -l; ` +
