@@ -2462,6 +2462,84 @@
         };
       }, []);
 
+      // Copy/Paste dispatcher for Edit-menu clicks and non-editable focus
+      // inside an active terminal tab.
+      // xterm keeps its selection outside the DOM, so copy/paste needs to
+      // talk to the active Terminal instance rather than webContents.copy().
+      useEffect(() => {
+        const handleClipboardShortcut = async (action) => {
+          const active = document.activeElement;
+          const tag = active?.tagName?.toLowerCase();
+          const isEditable =
+            active?.isContentEditable ||
+            tag === 'input' ||
+            tag === 'textarea' ||
+            tag === 'select';
+          const xtermEl = active?.closest?.('.xterm');
+          const activeTerminal = activeAgent && isTerminalProvider(activeAgent.provider);
+          const entry =
+            (xtermEl && window._agentHubXterms?.get(xtermEl)) ||
+            (!isEditable && activeTerminal && window._agentHubActiveXterm?.agentId === activeAgent.id
+              ? window._agentHubActiveXterm
+              : null) ||
+            (!isEditable && activeTerminal
+              ? window._agentHubXtermsByAgent?.get(activeAgent.id)
+              : null);
+
+          if (entry) {
+            const { term, agentId } = entry;
+            if (action === 'copy') {
+              if (term?.hasSelection?.()) {
+                await window.agentHub.clipboard.writeText(term.getSelection());
+              }
+            } else if (action === 'paste' && agentId) {
+              const text = await window.agentHub.clipboard.readText();
+              if (text) term?.paste?.(text);
+              else {
+                term?.focus?.();
+                window.agentHub.nativeClipboard?.('paste');
+              }
+            }
+            return;
+          }
+          // Non-xterm focus — let main do native copy/paste on the
+          // focused element (textarea, contenteditable, selected text).
+          window.agentHub.nativeClipboard?.(action);
+        };
+
+        const onKeyDown = (e) => {
+          if (!e.metaKey || e.ctrlKey || e.altKey) return;
+          const key = e.key.toLowerCase();
+          if (key !== 'c' && key !== 'v') return;
+
+          const active = document.activeElement;
+          const tag = active?.tagName?.toLowerCase();
+          const isEditable =
+            active?.isContentEditable ||
+            tag === 'input' ||
+            tag === 'textarea' ||
+            tag === 'select';
+
+          // Focused xterm instances handle this in TerminalView. This catches
+          // body/topbar focus while a terminal tab is active.
+          if (active?.closest?.('.xterm')) return;
+          if (isEditable || !activeAgent || !isTerminalProvider(activeAgent.provider)) return;
+
+          e.preventDefault();
+          e.stopPropagation();
+          handleClipboardShortcut(key === 'c' ? 'copy' : 'paste');
+        };
+
+        const off = window.agentHub.onClipboardShortcut?.((action) => {
+          handleClipboardShortcut(action);
+        });
+        window.addEventListener('keydown', onKeyDown, true);
+        return () => {
+          off?.();
+          window.removeEventListener('keydown', onKeyDown, true);
+        };
+      }, [activeAgent?.id, activeAgent?.provider]);
+
       useEffect(() => {
         document.documentElement.setAttribute('data-theme', theme);
         document.documentElement.className = theme === 'light' ? 'light-theme' : '';
@@ -4369,11 +4447,27 @@
           // macOS Cmd shortcuts (Terminal.app parity). Cmd is never forwarded
           // as a modifier to the PTY, so translate to readline control chars.
           if (e.metaKey && !e.ctrlKey && !e.altKey) {
-            switch (e.key) {
-              case 'Backspace': return send('\x15'); // kill to start of line
-              case 'Delete':    return send('\x0b'); // kill to end of line
-              case 'ArrowLeft': return send('\x01'); // beginning of line
-              case 'ArrowRight':return send('\x05'); // end of line
+            switch (e.key.toLowerCase()) {
+              case 'c':
+                if (term.hasSelection()) {
+                  window.agentHub.clipboard.writeText(term.getSelection()).catch(() => {});
+                }
+                e.preventDefault();
+                return false;
+              case 'v':
+                window.agentHub.clipboard.readText().then(text => {
+                  if (text) term.paste(text);
+                  else {
+                    term.focus();
+                    window.agentHub.nativeClipboard?.('paste');
+                  }
+                }).catch(() => {});
+                e.preventDefault();
+                return false;
+              case 'backspace': return send('\x15'); // kill to start of line
+              case 'delete':    return send('\x0b'); // kill to end of line
+              case 'arrowleft': return send('\x01'); // beginning of line
+              case 'arrowright':return send('\x05'); // end of line
             }
           }
 
@@ -4444,6 +4538,13 @@
           if (idleTimer) clearTimeout(idleTimer);
           offData();
           offExit();
+          const registered = window._agentHubXtermsByAgent?.get(agent.id);
+          if (registered?.term === term) {
+            window._agentHubXtermsByAgent.delete(agent.id);
+            if (window._agentHubActiveXterm?.term === term) {
+              window._agentHubActiveXterm = null;
+            }
+          }
           term.dispose();
           xtermRef.current = null;
           fitAddonRef.current = null;
@@ -4454,7 +4555,7 @@
         };
       }, [agent.id]);
 
-      // Image drag-drop and clipboard-paste support.
+      // Drag/drop plus terminal-local clipboard support.
       // Claude Code / Codex read image references as plain file paths typed
       // at the prompt, so we inject the path into the PTY on drop/paste.
       useEffect(() => {
@@ -4471,6 +4572,28 @@
           xtermRef.current?.focus();
         };
 
+        const copySelection = async (event) => {
+          const term = xtermRef.current;
+          if (!term?.hasSelection?.()) return false;
+          const text = term.getSelection();
+          if (!text) return false;
+          event?.clipboardData?.setData?.('text/plain', text);
+          event?.preventDefault?.();
+          event?.stopPropagation?.();
+          await window.agentHub.clipboard.writeText(text);
+          return true;
+        };
+
+        const pasteText = (text, event) => {
+          const term = xtermRef.current;
+          if (!term || !text) return false;
+          event?.preventDefault?.();
+          event?.stopPropagation?.();
+          term.paste(text);
+          term.focus();
+          return true;
+        };
+
         const onDragOver = (e) => {
           e.preventDefault();
           if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
@@ -4483,9 +4606,35 @@
           writePaths(files.map(f => f.path));
         };
 
+        const onCopy = (e) => {
+          copySelection(e).catch(() => {});
+        };
+
+        const onKeyDown = (e) => {
+          if (!e.metaKey || e.ctrlKey || e.altKey) return;
+          const key = e.key.toLowerCase();
+          if (key === 'c') {
+            copySelection(e).catch(() => {});
+          } else if (key === 'v') {
+            e.preventDefault();
+            e.stopPropagation();
+            window.agentHub.clipboard.readText()
+              .then(text => {
+                if (!pasteText(text, e)) {
+                  xtermRef.current?.focus();
+                  window.agentHub.nativeClipboard?.('paste');
+                }
+              })
+              .catch(() => {});
+          }
+        };
+
         // Capture phase so we intercept before xterm.js writes the image
         // bytes as garbled text into the PTY.
         const onPaste = async (e) => {
+          const text = e.clipboardData?.getData?.('text/plain');
+          if (pasteText(text, e)) return;
+
           const items = [...(e.clipboardData?.items || [])];
           const imageItem = items.find(it => it.kind === 'file' && it.type.startsWith('image/'));
           if (!imageItem) return;
@@ -4505,27 +4654,22 @@
 
         el.addEventListener('dragover', onDragOver);
         el.addEventListener('drop', onDrop);
+        el.addEventListener('copy', onCopy, true);
+        el.addEventListener('keydown', onKeyDown, true);
         el.addEventListener('paste', onPaste, true);
         return () => {
           el.removeEventListener('dragover', onDragOver);
           el.removeEventListener('drop', onDrop);
+          el.removeEventListener('copy', onCopy, true);
+          el.removeEventListener('keydown', onKeyDown, true);
           el.removeEventListener('paste', onPaste, true);
         };
       }, [agent.id]);
 
-      // Wheel-in-alt-screen fallback. The primary scroll path is SGR mouse
-      // events: tmux is started with `mouse on`, so xterm.js's mouse mode
-      // activates and forwards real wheel events through the PTY (handled
-      // natively by Claude Code / Codex / vim). When that path is live,
-      // xterm.js adds the .enable-mouse-events class to its element and we
-      // bail out of this handler so xterm.js owns the wheel.
-      //
-      // The fallback below only fires when mouse mode is NOT active (e.g.
-      // tmux is unavailable on a remote host, or an inner program disables
-      // mouse tracking). Without it, xterm.js's default in alt-screen is to
-      // emit ESC[A / ESC[B per wheel notch, which Claude Code interprets
-      // as input-history navigation and warns about. PgUp/PgDn are at least
-      // harmless for those programs.
+      // Wheel-in-alt-screen fallback. We keep tmux mouse mode off so normal
+      // drag selects text without holding Option. In alternate-screen apps
+      // that would otherwise receive cursor up/down from wheel events, send
+      // PgUp/PgDn instead.
       useEffect(() => {
         const el = containerRef.current;
         if (!el) return;
@@ -4566,6 +4710,21 @@
           xtermRef.current.open(containerRef.current);
           fitAddonRef.current.fit();
           openedRef.current = true;
+          // Register this xterm so the App-level Cmd+C/V dispatcher can
+          // find the term + agentId from a focused .xterm DOM element.
+          const el = xtermRef.current.element;
+          if (el) {
+            if (!window._agentHubXterms) window._agentHubXterms = new WeakMap();
+            if (!window._agentHubXtermsByAgent) window._agentHubXtermsByAgent = new Map();
+            const entry = { term: xtermRef.current, agentId: agent.id };
+            window._agentHubXterms.set(el, { term: xtermRef.current, agentId: agent.id });
+            window._agentHubXtermsByAgent.set(agent.id, entry);
+            window._agentHubActiveXterm = entry;
+
+            const markActive = () => { window._agentHubActiveXterm = entry; };
+            el.addEventListener('mousedown', markActive);
+            el.addEventListener('focusin', markActive);
+          }
         }
 
         if (!spawnedRef.current) {

@@ -98,6 +98,25 @@ contextBridge.exposeInMainWorld('agentHub', {
   // Save clipboard image to temp file, returns { path } or { error }
   saveImageTemp: (data, ext) => ipcRenderer.invoke('image:save-temp', data, ext),
 
+  // Native clipboard. Routed through main because the preload is sandboxed
+  // (Electron 20+ default), so require('electron').clipboard is undefined
+  // here. Both methods are async.
+  clipboard: {
+    writeText: (text) => ipcRenderer.invoke('clipboard:write', text),
+    readText: () => ipcRenderer.invoke('clipboard:read'),
+  },
+
+  // Copy/Paste routing for Edit-menu clicks. The renderer chooses
+  // xterm-specific behavior or falls back to native DOM copy/paste.
+  onClipboardShortcut: (cb) => {
+    const handler = (_e, action) => cb(action);
+    ipcRenderer.on('clipboard:shortcut', handler);
+    return () => ipcRenderer.removeListener('clipboard:shortcut', handler);
+  },
+  // Renderer asks main to perform a native copy/paste on the focused
+  // element. Used as the fallback when focus is NOT in an xterm.
+  nativeClipboard: (action) => ipcRenderer.send('native-clipboard', action),
+
   // Desktop-app window-pinning — pins a foreign macOS app (Claude.app,
   // Codex.app) visually inside Agent Hub's content area via Accessibility APIs.
   // appKey is one of 'claude', 'codex' (see lib/desktop-app-pin.js).
