@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, nativeTheme, shell } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, nativeTheme, shell, clipboard } = require('electron');
 const { spawn, spawnSync, execSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -37,6 +37,10 @@ function buildAppMenu(win) {
     if (!win || win.isDestroyed()) return;
     win.webContents.send('find:command', { action });
   };
+  const sendClipboardShortcut = (action) => {
+    if (!win || win.isDestroyed()) return;
+    win.webContents.send('clipboard:shortcut', action);
+  };
   const isMac = process.platform === 'darwin';
   const template = [
     ...(isMac ? [{
@@ -64,8 +68,10 @@ function buildAppMenu(win) {
         { role: 'redo' },
         { type: 'separator' },
         { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
+        // xterm.js manages its own selection outside the DOM, so route
+        // Copy/Paste through the renderer and let it choose xterm vs native.
+        { label: 'Copy', accelerator: 'CmdOrCtrl+C', registerAccelerator: false, click: () => sendClipboardShortcut('copy') },
+        { label: 'Paste', accelerator: 'CmdOrCtrl+V', registerAccelerator: false, click: () => sendClipboardShortcut('paste') },
         { role: 'pasteAndMatchStyle' },
         { role: 'delete' },
         { role: 'selectAll' },
@@ -464,6 +470,27 @@ app.on('before-quit', () => {
 
 ipcMain.handle('theme:get', () => nativeTheme.shouldUseDarkColors);
 
+// ── Native Clipboard Fallback IPC ──
+// Renderer asks main to perform a native copy/paste on the focused element
+// when the focus is NOT in an xterm (e.g. chat textarea, settings input).
+// Edit-menu Copy/Paste is custom-routed so xterm can participate;
+// regular DOM targets come back through this native fallback.
+ipcMain.on('native-clipboard', (event, action) => {
+  const wc = event.sender;
+  if (!wc || wc.isDestroyed()) return;
+  if (action === 'copy') wc.copy();
+  else if (action === 'paste') wc.paste();
+});
+
+// ── Clipboard Read/Write IPC ──
+// The preload is sandboxed (Electron 20+ default with nodeIntegration:false),
+// which means require('electron').clipboard is undefined there. Route through
+// main, which has full clipboard access.
+ipcMain.handle('clipboard:write', (_e, text) => {
+  clipboard.writeText(String(text ?? ''));
+});
+ipcMain.handle('clipboard:read', () => clipboard.readText());
+
 // ── External Links IPC ──
 
 ipcMain.handle('open-external', async (_event, url) => {
@@ -641,13 +668,10 @@ function hasLocalTmux() {
 // a plain login shell if tmux isn't installed on the target host. `-d` on the
 // attach kicks any other client off the session so the newest tab wins.
 //
-// `mouse on` is set per-session so wheel events propagate end-to-end:
-// xterm.js sees tmux's DECSET 1000+1006, sends real SGR mouse events, and
-// tmux forwards them to programs that asked for mouse tracking (Claude Code,
-// Codex) so their internal scroll works. Programs that don't request mouse
-// tracking fall back to tmux's own pane scrollback. Without this, xterm.js
-// translated wheel into cursor up/down arrow keys (the source of Claude
-// Code's "scroll wheel is sending arrow keys" warning).
+// Keep tmux mouse mode off so normal drag selects text in xterm. When tmux
+// mouse mode is on, xterm sends drag events into tmux/Codex/Claude and macOS
+// requires Option-drag to force a terminal selection, which makes Cmd+C feel
+// broken.
 function buildTmuxCommand(name, cwd) {
   const qname = shQuote(name);
   const cwdArg = cwd ? ` -c ${shQuote(cwd)}` : '';
@@ -656,7 +680,7 @@ function buildTmuxCommand(name, cwd) {
     `if command -v tmux >/dev/null 2>&1; then ` +
       `tmux has-session -t ${qname} 2>/dev/null || ` +
       `tmux new-session -d -s ${qname}${cwdArg}; ` +
-      `tmux set-option -t ${qname} mouse on >/dev/null 2>&1; ` +
+      `tmux set-option -t ${qname} mouse off >/dev/null 2>&1; ` +
       `exec tmux attach-session -dt ${qname}; ` +
     `else ` +
       `${cdLine}exec "$SHELL" -l; ` +
