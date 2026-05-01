@@ -4396,18 +4396,45 @@
 
       const installMouseSelectionBridge = (term) => {
         const selectionService = term?._core?._selectionService;
-        if (!selectionService || selectionService._agentHubMouseSelectionPatched) return;
+        const coreMouseService = term?._core?.coreMouseService;
+        if (!selectionService || !coreMouseService || selectionService._agentHubMouseSelectionPatched) return;
         const originalShouldForceSelection = selectionService.shouldForceSelection?.bind(selectionService);
+        const originalTriggerMouseEvent = coreMouseService.triggerMouseEvent?.bind(coreMouseService);
         if (!originalShouldForceSelection) return;
+        if (!originalTriggerMouseEvent) return;
 
         // tmux mouse mode keeps terminal-app scrolling working, but xterm
         // disables normal selection while mouse reporting is active. Force
         // primary-button drags down xterm's selection path; wheel events still
-        // flow through to tmux/Claude/Codex.
+        // flow through to tmux/Claude/Codex. Suppress the matching mouse-up
+        // report too, otherwise xterm treats it as input and clears the
+        // selection as soon as the button is released.
         selectionService.shouldForceSelection = (event) => {
-          if (event?.button === 0 && !event.ctrlKey && !event.metaKey) return true;
+          if (event?.button === 0 && !event.ctrlKey && !event.metaKey) {
+            selectionService._agentHubMouseSelecting = true;
+            return true;
+          }
           return originalShouldForceSelection(event);
         };
+        coreMouseService.triggerMouseEvent = (event) => {
+          const isWheel = event?.button === 4;
+          if (selectionService._agentHubMouseSelecting && !isWheel) {
+            if (event?.action === 0) selectionService._agentHubMouseSelecting = false;
+            return false;
+          }
+          return originalTriggerMouseEvent(event);
+        };
+
+        const originalHandleMouseUp = selectionService._handleMouseUp?.bind(selectionService);
+        if (originalHandleMouseUp) {
+          selectionService._handleMouseUp = (event) => {
+            try {
+              return originalHandleMouseUp(event);
+            } finally {
+              selectionService._agentHubMouseSelecting = false;
+            }
+          };
+        }
         selectionService._agentHubMouseSelectionPatched = true;
       };
 
